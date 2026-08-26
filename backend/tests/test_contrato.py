@@ -1,5 +1,10 @@
 """Verifica que cada endpoint devuelve la forma EXACTA de la sección 5.
 
+Acá van sólo las pruebas que NO necesitan base: los endpoints públicos y de
+pantalla (que todavía responden datos fijos), la forma de los errores y la
+superficie de la API. Las de administración, que desde la Fase 2 consultan
+la base de verdad, viven en test_fase2.py.
+
 No comprueba valores (en la Fase 1 son inventados): comprueba el conjunto de
 claves de cada respuesta y el formato de los errores. Si alguien agrega, saca o
 renombra un campo, estas pruebas fallan. Es a propósito: el contrato es lo que
@@ -16,7 +21,6 @@ from app.main import app
 CODIGO_ACTIVO = "ab12cd34"
 CODIGO_CERRADO = "ef56gh78"
 TOKEN_ACTIVO = "64syPN4YFgbJibLfIOlrjI51R0HFlKDm"
-AUTH = {"Authorization": "Bearer fase1-token-de-prueba"}
 
 
 @pytest.fixture(scope="module")
@@ -179,87 +183,6 @@ RUTAS_PROTEGIDAS = [
 @pytest.mark.parametrize("metodo,ruta", RUTAS_PROTEGIDAS)
 def test_sin_bearer_es_no_autorizado(cliente, metodo, ruta):
     afirmar_error(getattr(cliente, metodo)(ruta), "NO_AUTORIZADO", 401)
-
-
-def test_login(cliente):
-    r = cliente.post("/api/admin/login", json={"email": "ana@transmitifoto.test", "password": "x"})
-    assert r.status_code == 200
-    assert claves(r) == {"token", "expira_en"}
-
-
-def test_listar_eventos(cliente):
-    r = cliente.get("/api/admin/eventos", headers=AUTH)
-    assert r.status_code == 200
-    assert set(r.json()[0].keys()) == {
-        "id", "nombre", "fecha_evento", "estado", "codigo_publico",
-        "token_pantalla", "pendientes", "aprobadas", "rechazadas",
-    }
-
-
-def test_crear_evento(cliente):
-    r = cliente.post(
-        "/api/admin/eventos",
-        json={"nombre": "Casamiento de prueba", "fecha_evento": "2026-12-01"},
-        headers=AUTH,
-    )
-    assert r.status_code == 201
-    cuerpo = r.json()
-    assert cuerpo["codigo_publico"] != cuerpo["token_pantalla"]
-    assert len(cuerpo["codigo_publico"]) == 8
-    assert len(cuerpo["token_pantalla"]) == 32
-
-
-def test_cambiar_estado_evento(cliente):
-    r = cliente.patch("/api/admin/eventos/1", json={"estado": "cerrado"}, headers=AUTH)
-    assert r.status_code == 200
-    assert r.json()["estado"] == "cerrado"
-
-
-def test_cambiar_estado_evento_inexistente(cliente):
-    r = cliente.patch("/api/admin/eventos/999", json={"estado": "cerrado"}, headers=AUTH)
-    afirmar_error(r, "EVENTO_NO_ENCONTRADO", 404)
-
-
-def test_fotos_admin(cliente):
-    r = cliente.get("/api/admin/eventos/1/fotos?estado=pendiente", headers=AUTH)
-    assert r.status_code == 200
-    cuerpo = r.json()
-    assert set(cuerpo.keys()) == {"fotos", "ultimo_id"}
-    assert set(cuerpo["fotos"][0].keys()) == {
-        "id", "url", "ancho", "alto", "bytes", "estado", "nombre_invitado", "subida_en",
-    }
-
-
-def test_resumen(cliente):
-    r = cliente.get("/api/admin/eventos/1/resumen", headers=AUTH)
-    assert claves(r) == {"pendientes", "aprobadas", "rechazadas"}
-
-
-def test_moderar_foto_es_idempotente(cliente):
-    primera = cliente.patch("/api/admin/fotos/121", json={"estado": "aprobada"}, headers=AUTH)
-    segunda = cliente.patch("/api/admin/fotos/121", json={"estado": "aprobada"}, headers=AUTH)
-    assert primera.status_code == segunda.status_code == 200
-    assert primera.json() == segunda.json()
-    assert claves(primera) == {"id", "estado"}
-
-
-def test_moderar_lote(cliente):
-    r = cliente.post(
-        "/api/admin/fotos/lote",
-        json={"ids": [121, 124, 127], "estado": "aprobada"},
-        headers=AUTH,
-    )
-    assert r.status_code == 200
-    assert claves(r) == {"afectadas"}
-    assert r.json()["afectadas"] == 3
-
-
-def test_descarga_devuelve_un_zip(cliente):
-    r = cliente.get("/api/admin/eventos/1/descarga?incluir=aprobadas", headers=AUTH)
-    assert r.status_code == 200
-    assert r.headers["content-type"] == "application/zip"
-    assert r.content[:2] == b"PK", "tiene que ser un ZIP de verdad"
-    assert "Casamiento" in r.headers["content-disposition"]
 
 
 # ─────────────────────────────────────────────────────────────

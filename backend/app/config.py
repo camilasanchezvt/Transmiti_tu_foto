@@ -26,7 +26,10 @@ class Config(BaseSettings):
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
 
-    JWT_SECRET: str = "cambiame-en-produccion"
+    # Este valor por defecto sólo sirve para desarrollo y está escrito en el
+    # repositorio, así que es público. La validación de abajo impide arrancar
+    # en producción con él.
+    JWT_SECRET: str = "solo-para-desarrollo-no-usar-en-produccion"
     JWT_HORAS: int = 12
 
     CORS_ORIGINS: str = "http://localhost:5173"
@@ -39,6 +42,27 @@ class Config(BaseSettings):
     @property
     def es_produccion(self) -> bool:
         return self.ENTORNO.lower() == "produccion"
+
+    def model_post_init(self, _contexto: object) -> None:
+        """Falla al arrancar, no en el primer login, si el despliegue está mal.
+
+        Un JWT_SECRET débil o el de desarrollo permitirían firmar tokens de
+        administrador a mano. Es preferible que Render no levante el servicio
+        antes que servir un panel abierto.
+        """
+        if not self.es_produccion:
+            return
+        if self.JWT_SECRET == Config.model_fields["JWT_SECRET"].default:
+            raise RuntimeError(
+                "JWT_SECRET sigue siendo el de desarrollo, que es público. "
+                "Generá uno con: python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+            )
+        if len(self.JWT_SECRET) < 32:
+            raise RuntimeError(
+                f"JWT_SECRET tiene {len(self.JWT_SECRET)} caracteres; hacen falta 32 o más."
+            )
+        if not self.CLOUDINARY_API_SECRET:
+            raise RuntimeError("Falta CLOUDINARY_API_SECRET: no se pueden firmar las subidas.")
 
 
 @lru_cache

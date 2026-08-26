@@ -7,8 +7,10 @@ pantalla del salón. Varios eventos a la vez, aislados entre sí.
 La especificación completa está en [CONSTRUIR-APP.md](CONSTRUIR-APP.md). Las
 reglas permanentes para trabajar en el repo están en [CLAUDE.md](CLAUDE.md).
 
-**Estado: Fase 0 (andamio) terminada.** Todavía no hay backend ni frontend;
-sólo la estructura, la base de datos y los datos de desarrollo.
+**Estado: Fases 0, 1 y 2 terminadas.** El backend responde los 14 endpoints del
+contrato, con base de datos, modelos y autenticación reales. Los endpoints de
+fotos, moderación y descarga todavía devuelven datos fijos: llegan en las
+Fases 3 y 4. Del frontend todavía no hay nada (Fases 5 a 8).
 
 ---
 
@@ -70,10 +72,19 @@ cd frontend && npm run dev
     docker compose up -d                       # Postgres local
     docker compose down -v                     # apagar y borrar los datos
     docker compose exec db psql -U transmiti   # consola SQL
-    cd backend && uvicorn app.main:app --reload
-    cd backend && alembic upgrade head
-    cd backend && pytest
-    cd frontend && npm run dev
+    cd backend && uvicorn app.main:app --reload   # API en :8000, /docs para probarla
+    cd backend && alembic upgrade head           # migraciones
+    cd backend && pytest                         # pruebas
+    cd frontend && npm run dev                   # SPA en :5173
+
+### Pruebas
+
+`pytest` corre siempre. Las pruebas que necesitan Postgres se saltean solas si
+no encuentra la variable `DATABASE_URL_TEST`, así que en una máquina sin base
+igual se verifica el contrato completo. Para correrlas todas, apuntá a una base
+**vacía y descartable** — el fixture borra y recrea el esquema en cada corrida:
+
+    DATABASE_URL_TEST=postgresql+psycopg://transmiti:transmiti@localhost:5432/transmiti_test pytest
 
 ---
 
