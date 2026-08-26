@@ -1,0 +1,8 @@
+# Esta máquina tiene core.autocrlf activo. Los archivos que consume un contenedor
+# Linux (los SQL que Postgres aplica desde /docker-entrypoint-initdb.d) tienen que
+# viajar con finales de línea LF o pueden fallar de formas raras.
+* text=auto
+*.sql   text eol=lf
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf

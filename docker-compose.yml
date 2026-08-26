@@ -1,0 +1,33 @@
+# Postgres local para desarrollo.
+#
+# db/ se monta en /docker-entrypoint-initdb.d, así que al crear el volumen por
+# primera vez Postgres aplica solo schema.sql y después seed.sql (en ese orden,
+# porque los corre alfabéticamente). Para volver a aplicarlos hay que borrar el
+# volumen:  docker compose down -v && docker compose up -d
+
+services:
+  db:
+    image: postgres:16
+    container_name: transmiti_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: transmiti
+      POSTGRES_PASSWORD: transmiti
+      POSTGRES_DB: transmiti
+      # El servidor va en UTC. Las fechas del evento son de Argentina y se
+      # guardan como timestamptz, así que la conversión la hace la base.
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U transmiti -d transmiti"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  pgdata:
