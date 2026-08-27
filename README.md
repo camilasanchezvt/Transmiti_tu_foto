@@ -7,11 +7,15 @@ pantalla del salón. Varios eventos a la vez, aislados entre sí.
 La especificación completa está en [CONSTRUIR-APP.md](CONSTRUIR-APP.md). Las
 reglas permanentes para trabajar en el repo están en [CLAUDE.md](CLAUDE.md).
 
-**Estado: backend terminado (Fases 0 a 4).** Los 14 endpoints del contrato
-funcionan contra la base: autenticación, firma de Cloudinary, registro de fotos
-con la verificación de carpeta, la cola incremental de la pantalla, moderación
-idempotente, lote y descarga en ZIP por streaming. Del frontend todavía no hay
-nada (Fases 5 a 8).
+**Estado: backend terminado y frontend arrancado (Fases 0 a 5).** Los 14
+endpoints del contrato funcionan contra la base: autenticación, firma de
+Cloudinary, registro de fotos con la verificación de carpeta, la cola
+incremental de la pantalla, moderación idempotente, lote y descarga en ZIP por
+streaming. El frontend tiene las rutas de las tres zonas, el cliente de API y
+los componentes compartidos; las pantallas de verdad llegan en las Fases 6 a 8.
+
+El frontend lee `VITE_API_URL`. Si no está definida usa `http://localhost:8000`,
+así que en local anda sin configurar nada.
 
 ---
 

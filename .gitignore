@@ -28,3 +28,6 @@ desktop.ini
 # Salidas de trabajo
 *.log
 /descargas/
+
+# Artefactos de compilación de TypeScript
+*.tsbuildinfo
