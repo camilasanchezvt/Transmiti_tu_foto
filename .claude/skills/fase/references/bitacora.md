@@ -183,9 +183,14 @@ pide `desde=0&limite=maximo_buffer` en vez de sólo lo nuevo, y se incorpora lo
 que la pantalla todavía no tiene. Verificado: una foto aprobada fuera de orden
 aparece a los 9 segundos.
 
-**Queda por decidir si se arregla también en el backend.** El arreglo de fondo
-sería que la pantalla avance por orden de moderación y no por id, pero eso
-cambia el significado de `desde` y de `ultimo_id`, o sea el contrato.
+**Decidido: se deja así.** No se toca el backend. El arreglo de fondo sería que
+la pantalla avance por orden de moderación y no por id, pero eso cambiaría el
+significado de `desde` y de `ultimo_id`, o sea el contrato de la sección 5, que
+hasta acá se respetó al pie de la letra. El costo de la mitigación es un pedido
+más pesado cada medio minuto, irrelevante para doscientas fotos.
+
+Si algún día el rezago de hasta 30 segundos molesta, la palanca barata es bajar
+`PASADAS_ENTRE_RESINCRONIZACIONES` de 5 a 2 en `useCola.ts`, sin tocar nada más.
 
 ### Nunca poner efectos secundarios adentro de un updater de estado
 **Fase 8.** La bandeja empujaba al historial de deshacer desde adentro de un
