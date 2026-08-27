@@ -28,10 +28,15 @@ borrador no acepta nada: ni subidas ni pantalla". `GET /api/pantalla/{token}`
 de un borrador devuelve `EVENTO_BORRADOR` con 404.
 
 ### La Fase 8 pide moderar 50 fotos pero el seed tiene 5 pendientes
-**Fase 8, pendiente.** El criterio de la Fase 8 es "se moderan cincuenta fotos
-del seed en menos de dos minutos". El seed de la Fase 0 define 20 fotos, de las
-cuales 5 pendientes. Va a hacer falta un seed de volumen para medirlo. **Sin
-resolver.**
+**Fase 8. RESUELTO.** El criterio de la Fase 8 es "se moderan cincuenta fotos
+del seed en menos de dos minutos", pero el seed de la Fase 0 define 20 fotos,
+de las cuales 5 pendientes.
+
+Se agregó `db/seed_volumen.sql`, que suma 50 pendientes al evento activo. Va
+aparte y NO se aplica solo al levantar la base: no querés 50 pendientes cada vez
+que arrancás a trabajar. `db/seed.sql` queda tal cual lo describe la sección 10.
+
+    psql -d transmiti -f db/seed_volumen.sql
 
 ---
 
@@ -182,14 +187,28 @@ aparece a los 9 segundos.
 sería que la pantalla avance por orden de moderación y no por id, pero eso
 cambia el significado de `desde` y de `ultimo_id`, o sea el contrato.
 
+### Nunca poner efectos secundarios adentro de un updater de estado
+**Fase 8.** La bandeja empujaba al historial de deshacer desde adentro de un
+updater de `setFotos`. React puede invocar un updater más de una vez —en
+StrictMode lo hace siempre— así que cada aprobación dejaba DOS entradas en el
+historial.
+
+Se notaba recién al deshacer: después de agotar el historial real, `Z` seguía
+"deshaciendo" e insertaba fotos duplicadas. Con 55 pendientes y 50 aprobaciones,
+apretar Z de más llevaba el contador a 68.
+
+Todo el trabajo se hace ahora fuera del updater, y `deshacer` además se niega a
+insertar una foto que ya está en la lista.
+
+### La librería de QR quedó resuelta
+**Fases 7 y 8.** Se usa `qrcode` (npm, MIT, ~20 KB comprimidos), propuesta y
+aprobada antes de escribirla como pide la regla 10. En el panel se dibuja
+siempre a 1024 px y se muestra chico por CSS: el PNG que se baja tiene que
+servir para imprimir, no para la pantalla.
+
 ---
 
 ## Pendientes de decidir
-
-### La librería de QR
-**Fases 7 y 8.** El QR descargable en PNG y el QR de la pantalla necesitan una
-librería que no está en la lista del brief. Hay que **proponerla antes de
-escribirla** (regla 9). Todavía no se agregó nada.
 
 ### Docker no está instalado en la máquina de desarrollo
 `docker compose up -d` es lo que documentan `CLAUDE.md` y el `README.md`, y es

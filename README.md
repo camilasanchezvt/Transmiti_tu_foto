@@ -14,7 +14,11 @@ incremental de la pantalla, moderación idempotente, lote y descarga en ZIP por
 streaming. La app del invitado está completa: comprime la foto en el navegador,
 la sube directo a Cloudinary con progreso real y la registra. La pantalla de
 proyección pasa las fotos aprobadas sola, con QR, precarga, pantalla completa y
-recuperación ante cortes de red. El panel llega en la Fase 8.
+recuperación ante cortes de red. El panel permite crear eventos con su QR
+descargable, moderar con el teclado y cerrar y descargar.
+
+Falta la Fase 9 (despliegue), que necesita cuentas de Supabase, Render y
+Cloudinary, y la Fase 10 (endurecimiento y pruebas).
 
 El frontend lee `VITE_API_URL`. Si no está definida usa `http://localhost:8000`,
 así que en local anda sin configurar nada.
@@ -110,6 +114,11 @@ tres sin nombre; y fotos repartidas a lo largo de dos horas.
 
 Fotos del evento activo: 20 (12 aprobadas, 5 pendientes, 3 rechazadas).
 Fotos del evento cerrado: 4 (3 aprobadas, 1 pendiente).
+
+Para medir la bandeja de moderación hacen falta más pendientes de las que trae
+el seed. `db/seed_volumen.sql` agrega 50 al evento activo y se aplica aparte:
+
+    docker compose exec -T db psql -U transmiti < db/seed_volumen.sql
 
 El dispositivo `9f2c1a7b…` ya subió 8 de sus 10 fotos: alcanza con mandar dos
 más para probar el `LIMITE_ALCANZADO` sin tocar la base.
