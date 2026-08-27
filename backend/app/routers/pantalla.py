@@ -1,15 +1,19 @@
 """Endpoints de la pantalla de proyección. Base /api/pantalla.
 
-FASE 1 — datos fijos. Los dos comportamientos de `desde` (arranque en frío y
-polling incremental) sí están implementados de verdad sobre la lista fija: son
-la semántica del contrato, y la Fase 7 construye `useCola.ts` contra esto.
+El token de pantalla sólo habilita a LEER las fotos aprobadas de su evento.
+Todas las consultas se acotan por el evento que sale del token: de ahí sale el
+aislamiento entre eventos simultáneos.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
-from ..errores import Codigo, ErrorApp
+from ..database import get_db
+from ..deps import evento_por_token
+from ..models import Evento, Foto
 from ..schemas import (
     ColaPantalla,
     FotoPantalla,
@@ -21,68 +25,12 @@ from ..schemas import (
 
 router = APIRouter(prefix="/api/pantalla", tags=["pantalla"])
 
-_BASE = "https://res.cloudinary.com/demo/image/upload"
-
-# Los mismos tokens del seed (db/seed.sql).
-_EVENTOS: dict[str, dict] = {
-    "64syPN4YFgbJibLfIOlrjI51R0HFlKDm": {
-        "nombre": "Casamiento Ana y Juan",
-        "codigo_publico": "ab12cd34",
-        "estado": "activo",
-        "segundos_por_foto": 7,
-    },
-    "8MX4OqECds7IhkCmlK7vub76PntouGz1": {
-        "nombre": "Cumple de 15 de Malena",
-        "codigo_publico": "ef56gh78",
-        "estado": "cerrado",
-        "segundos_por_foto": 6,
-    },
-}
-
-# Doce aprobadas, en orden ascendente de id. Verticales, horizontales,
-# panorámicas y cuadradas, con nombres con acentos, uno vacío y algunos nulos:
-# los casos que rompen el maquetado.
-_APROBADAS: dict[str, list[dict]] = {
-    "ab12cd34": [
-        {"id": 101, "img": "couple",       "ancho": 1600, "alto": 1200, "nombre_invitado": "Sofía"},
-        {"id": 102, "img": "sample",       "ancho": 1200, "alto": 1600, "nombre_invitado": "Martín Peña"},
-        {"id": 103, "img": "balloons",     "ancho": 1600, "alto":  600, "nombre_invitado": "Sofía"},
-        {"id": 104, "img": "cld-sample",   "ancho": 1600, "alto": 1200, "nombre_invitado": None},
-        {"id": 105, "img": "flower",       "ancho": 1200, "alto": 1200, "nombre_invitado": "Martín Peña"},
-        {"id": 106, "img": "lady",         "ancho": 1200, "alto": 1600, "nombre_invitado": ""},
-        {"id": 107, "img": "horses",       "ancho": 1600, "alto":  600, "nombre_invitado": "Ñoño Gutiérrez"},
-        {"id": 108, "img": "cld-sample-2", "ancho": 1200, "alto": 1600, "nombre_invitado": "Martín Peña"},
-        {"id": 109, "img": "yellow_tulip", "ancho": 1200, "alto": 1600, "nombre_invitado": None},
-        {"id": 110, "img": "sheep",        "ancho": 1600, "alto": 1200, "nombre_invitado": "Sofía"},
-        {"id": 111, "img": "brown_sheep",  "ancho": 1200, "alto": 1600, "nombre_invitado": "Agustín Iñíguez"},
-        {"id": 112, "img": "nice_couple",  "ancho": 1600, "alto": 1200, "nombre_invitado": "Malén Ibáñez"},
-    ],
-    "ef56gh78": [
-        {"id": 201, "img": "sample",   "ancho": 1600, "alto": 1200, "nombre_invitado": "Malena"},
-        {"id": 202, "img": "balloons", "ancho": 1200, "alto": 1600, "nombre_invitado": "Tía Coca"},
-        {"id": 203, "img": "flower",   "ancho": 1600, "alto":  600, "nombre_invitado": None},
-    ],
-}
+# No son columnas de la tabla `eventos`: son constantes del servidor. De la base
+# sale sólo `segundos_por_foto`.
+INTERVALO_POLLING_MS = 6000
+MAXIMO_BUFFER = 200
 
 _ERROR_404 = {404: {"model": RespuestaError, "description": "EVENTO_NO_ENCONTRADO"}}
-
-
-def _buscar_evento(token_pantalla: str) -> dict:
-    evento = _EVENTOS.get(token_pantalla)
-    if evento is None:
-        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
-    return evento
-
-
-def _armar(fila: dict, codigo_publico: str) -> FotoPantalla:
-    sufijo = "" if codigo_publico == "ab12cd34" else "l_text:Arial_140_bold:EVENTO-B,co_white,g_north,y_60/"
-    return FotoPantalla(
-        id=fila["id"],
-        url=f"{_BASE}/c_fill,w_{fila['ancho']},h_{fila['alto']}/{sufijo}{fila['img']}.jpg",
-        ancho=fila["ancho"],
-        alto=fila["alto"],
-        nombre_invitado=fila["nombre_invitado"],
-    )
 
 
 @router.get(
@@ -91,21 +39,18 @@ def _armar(fila: dict, codigo_publico: str) -> FotoPantalla:
     responses={**_ERROR_404},
     summary="Configuración de la pantalla",
 )
-def obtener_pantalla(token_pantalla: str) -> Pantalla:
+def obtener_pantalla(evento: Evento = Depends(evento_por_token)) -> Pantalla:
     """Un evento `cerrado` sigue sirviendo la pantalla: las aprobadas terminan de pasar."""
-    evento = _buscar_evento(token_pantalla)
-    if evento["estado"] == "borrador":
-        raise ErrorApp(Codigo.EVENTO_BORRADOR)
     return Pantalla(
         evento=PantallaEvento(
-            nombre=evento["nombre"],
-            codigo_publico=evento["codigo_publico"],
-            estado=evento["estado"],
+            nombre=evento.nombre,
+            codigo_publico=evento.codigo_publico,
+            estado=evento.estado,
         ),
         config=PantallaConfig(
-            segundos_por_foto=evento["segundos_por_foto"],
-            intervalo_polling_ms=6000,
-            maximo_buffer=200,
+            segundos_por_foto=evento.segundos_por_foto,
+            intervalo_polling_ms=INTERVALO_POLLING_MS,
+            maximo_buffer=MAXIMO_BUFFER,
         ),
     )
 
@@ -117,24 +62,41 @@ def obtener_pantalla(token_pantalla: str) -> Pantalla:
     summary="Fotos aprobadas, incremental",
 )
 def obtener_fotos(
-    token_pantalla: str,
     desde: int = Query(default=0, ge=0, description="0 arranca en frío; N devuelve las de id > N"),
     limite: int = Query(default=40, ge=1, le=200),
+    evento: Evento = Depends(evento_por_token),
+    db: Session = Depends(get_db),
 ) -> ColaPantalla:
-    """Devuelve **sólo fotos aprobadas**, siempre en orden ascendente de id."""
-    evento = _buscar_evento(token_pantalla)
-    if evento["estado"] == "borrador":
-        raise ErrorApp(Codigo.EVENTO_BORRADOR)
+    """Devuelve **sólo fotos aprobadas**, siempre ascendentes por id.
 
-    todas = _APROBADAS.get(evento["codigo_publico"], [])
+    Dos comportamientos:
+    - `desde=0`: las últimas `limite` aprobadas, de la más vieja a la más nueva.
+      Es el arranque en frío, y por eso se piden las ÚLTIMAS y no las primeras:
+      una pantalla que arranca a mitad del evento tiene que mostrar lo reciente.
+    - `desde=N`: las aprobadas con id > N, ascendente. Es el polling normal.
+
+    Las dos consultas pegan contra idx_fotos_pantalla (evento_id, estado, id).
+    """
+    base = select(Foto).where(Foto.evento_id == evento.id, Foto.estado == "aprobada")
+
     if desde == 0:
-        # Arranque en frío: las últimas `limite`, de la más vieja a la más nueva.
-        elegidas = todas[-limite:]
+        # Las últimas `limite`: se ordena descendente para que el índice las
+        # entregue directo, y se da vuelta el resultado en Python.
+        filas = list(db.scalars(base.order_by(Foto.id.desc()).limit(limite)))
+        filas.reverse()
     else:
-        # Polling normal: sólo lo nuevo.
-        elegidas = [f for f in todas if f["id"] > desde][:limite]
+        filas = list(db.scalars(base.where(Foto.id > desde).order_by(Foto.id).limit(limite)))
 
-    fotos = [_armar(f, evento["codigo_publico"]) for f in elegidas]
+    fotos = [
+        FotoPantalla(
+            id=f.id,
+            url=f.url,
+            ancho=f.ancho,
+            alto=f.alto,
+            nombre_invitado=f.nombre_invitado,
+        )
+        for f in filas
+    ]
     return ColaPantalla(
         fotos=fotos,
         ultimo_id=fotos[-1].id if fotos else desde,

@@ -22,6 +22,12 @@ motor = create_engine(
     # el primer pedido después de un rato muere con "server closed the connection".
     pool_pre_ping=True,
     pool_recycle=1800,
+    # Sin timeout, un host que no contesta deja el pedido colgado hasta que se
+    # rinde TCP, que en Windows son más de un minuto. Pasa de verdad en dos
+    # casos: cuando Supabase gratuito se pausó, y cuando la cadena apunta a la
+    # conexión directa en vez del pooler y el nombre resuelve por IPv6.
+    # Es preferible un error claro a los cinco segundos que un worker tomado.
+    connect_args={"connect_timeout": 5},
     echo=False,
 )
 

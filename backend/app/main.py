@@ -10,13 +10,17 @@ FASE 1 — los routers responden datos fijos. No hay base ni Cloudinary todavía
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as ExcepcionHTTP
 
 from .config import obtener_config
+from .database import get_db
 from .errores import Codigo, ErrorApp
 from .routers import admin, pantalla, publico
 from .schemas import Salud
@@ -89,9 +93,17 @@ app.include_router(admin.protegido)
 
 
 @app.get("/api/salud", response_model=Salud, tags=["salud"], summary="Health check")
-def salud() -> Salud:
+def salud(db: Session = Depends(get_db)) -> Salud:
     """Sin auth. Render lo usa para saber si el servicio está vivo.
 
-    FASE 1: no hay base todavía, así que `base` informa que no está conectada.
+    Responde 200 aunque la base no conteste, con `base` en "caida". Si devolviera
+    un error, Render reiniciaría el servicio en loop por un problema que no es
+    del servicio: cuando Supabase gratuito se pausa, lo que hay que hacer es
+    despertar Supabase, no reiniciar la API.
     """
-    return Salud(estado="ok", base="sin conectar")
+    try:
+        db.execute(text("SELECT 1"))
+        estado_base = "ok"
+    except SQLAlchemyError:
+        estado_base = "caida"
+    return Salud(estado="ok", base=estado_base)
