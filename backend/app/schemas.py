@@ -243,6 +243,33 @@ class ResultadoLote(BaseModel):
 
 
 # ─────────────────────────────────────────────────────────────
+# Vinculación de pantalla por código corto
+# ─────────────────────────────────────────────────────────────
+
+class CodigoVinculacion(BaseModel):
+    """Respuesta de POST /api/admin/eventos/{id}/vincular
+
+    Existe porque el link de la pantalla mide 68 caracteres y hay que poder
+    cargarlo con el control remoto de una tele.
+    """
+
+    codigo: str = Field(examples=["394812"])
+    expira_en: datetime
+
+
+class PedidoCanje(BaseModel):
+    """Cuerpo de POST /api/pantalla/canjear. Se aceptan espacios y guiones."""
+
+    codigo: str = Field(min_length=6, max_length=16, examples=["394 812"])
+
+
+class TokenDePantalla(BaseModel):
+    """Respuesta del canje. Es la única vez que el token viaja sin estar en la URL."""
+
+    token_pantalla: str
+
+
+# ─────────────────────────────────────────────────────────────
 # Salud
 # ─────────────────────────────────────────────────────────────
 

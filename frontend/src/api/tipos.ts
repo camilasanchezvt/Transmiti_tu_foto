@@ -147,6 +147,20 @@ export interface ResultadoLote {
   afectadas: number;
 }
 
+// ── Vinculación de pantalla por código corto ─────────────────
+// Agregado fuera del contrato de la sección 5, propuesto y aprobado antes de
+// escribirlo: el link de la pantalla mide 68 caracteres y hay que poder
+// cargarlo con el control remoto de una tele.
+
+export interface CodigoVinculacion {
+  codigo: string;
+  expira_en: string;
+}
+
+export interface TokenDePantalla {
+  token_pantalla: string;
+}
+
 export interface Salud {
   estado: string;
   base: string;

@@ -211,6 +211,54 @@ aprobada antes de escribirla como pide la regla 10. En el panel se dibuja
 siempre a 1024 px y se muestra chico por CSS: el PNG que se baja tiene que
 servir para imprimir, no para la pantalla.
 
+### Se agregaron DOS endpoints fuera del contrato: vinculación por código corto
+**Fuera de fase. Propuesto y aprobado antes de escribirlo, como pide la regla 9.**
+
+    POST /api/admin/eventos/{id}/vincular   (con Bearer) -> { codigo, expira_en }
+    POST /api/pantalla/canjear              (sin auth)   -> { token_pantalla }
+
+**Por qué:** el link de la pantalla mide 68 caracteres, de los cuales 32 son el
+token al azar. Tipearlo con el control remoto de una tele, en un teclado en
+pantalla y con la cruceta, son cinco minutos y un error de tipeo de volver a
+empezar. Eso hacía inviable usar el navegador de una smart TV.
+
+**Por qué en ese sentido y no al revés** (que la tele muestre el código y el
+panel lo cargue): un control remoto tiene teclado numérico. Seis dígitos los
+escribe bien; letras y símbolos no. Además así no hace falta polling.
+
+**Por qué seis dígitos alcanzan:** el código dura 10 minutos, es de un solo uso,
+hay uno solo activo por evento, y el canje tiene el límite de pedidos de
+`ratelimit.py`. Con 30 intentos cada 10 minutos por IP contra un millón de
+combinaciones, la probabilidad de acertar dentro de la ventana es 0,003%. Y lo
+peor que se consigue con un código robado es leer las fotos APROBADAS de un
+evento: no habilita a subir, ni a moderar, ni a ver las pendientes.
+
+El estado vive en memoria (`app/vinculacion.py`), igual que `ratelimit.py` y por
+las mismas razones. Un reinicio obliga a generar el código de nuevo, y como la
+vinculación entera dura menos de un minuto, en la práctica no molesta.
+
+**Falta:** llevar estos dos endpoints a la sección 5 de CONSTRUIR-APP.md. El
+brief sigue describiendo catorce. `tests/test_contrato.py` tiene la lista
+`AGREGADOS`, que es lo que hace que el agregado sea deliberado: si aparece un
+endpoint que no está ni en el contrato ni ahí, la prueba falla.
+
+### Cómo transmitir a una tele
+**Referencia.** Ordenado por confiabilidad para un evento de tres horas:
+
+1. **Cable HDMI** desde una notebook o mini PC. Es lo que asume el brief y lo
+   que no falla: la tele es sólo un monitor.
+2. **Chromecast** transmitiendo la pestaña de Chrome. Sin tocar código.
+3. **Duplicar pantalla (Miracast)** desde Windows. Gratis, más caprichoso.
+4. **El navegador de la tele**, ahora viable gracias al código corto. Ojo: la
+   pantalla usa `blur-3xl` y `backdrop-blur`, que son filtros de GPU a pantalla
+   completa repintados en cada transición. Una notebook los hace sin
+   despeinarse; un Fire Stick o una tele de 2019 se pueden trabar. Si aparece
+   ese problema, la salida es hacer el fondo desenfocado opcional.
+
+`requestFullscreen`, `wakeLock`, `AbortController` y `localStorage` están
+escritos con `?.` y dentro de `try`: si la tele no los tiene, la pantalla
+degrada en vez de romperse.
+
 ---
 
 ## Pendientes de decidir

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
+import { guardarPantalla } from "../api/client";
 import Cargando from "../comp/Cargando";
 import MensajeError from "../comp/MensajeError";
 import QR from "./QR";
@@ -15,8 +16,14 @@ const FUNDIDO_MS = 700;
  * Cinco estados: esperando, pasando fotos, llegó una nueva, sin conexión y
  * evento cerrado.
  */
-export default function PaginaPantalla() {
-  const { token = "" } = useParams();
+interface Props {
+  /** Cuando se llegó por `/p` y la tele ya estaba vinculada. */
+  tokenVinculado?: string;
+}
+
+export default function PaginaPantalla({ tokenVinculado }: Props = {}) {
+  const { token: enLaUrl = "" } = useParams();
+  const token = tokenVinculado ?? enLaUrl;
   const { cargando, error, datos, foto, anterior, hayFotos, sinConexion, llegaron } =
     useCola(token);
 
@@ -47,6 +54,12 @@ export default function PaginaPantalla() {
       window.removeEventListener("click", alInteractuar);
     };
   }, [pantallaCompleta, entrarAcompleta]);
+
+  // El nombre del evento en el título: con dos pantallas vinculadas, es lo que
+  // las distingue al ir a buscar cuál desvincular.
+  useEffect(() => {
+    if (datos) document.title = `${datos.evento.nombre} · Pantalla`;
+  }, [datos]);
 
   // Que la notebook no se suspenda a mitad del evento.
   useEffect(() => {
@@ -151,6 +164,19 @@ export default function PaginaPantalla() {
         <p className="absolute left-1/2 top-8 -translate-x-1/2 rounded-full bg-black/60 px-5 py-2 text-sm text-white/70">
           Tocá cualquier tecla para pantalla completa
         </p>
+      )}
+
+      {tokenVinculado && !pantallaCompleta && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            guardarPantalla(null);
+            window.location.reload();
+          }}
+          className="absolute left-8 bottom-8 rounded-full bg-black/60 px-4 py-2 text-sm text-white/60 hover:text-white"
+        >
+          Desvincular esta pantalla
+        </button>
       )}
     </div>
   );

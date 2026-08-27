@@ -131,6 +131,7 @@ Rutas útiles una vez que exista el frontend:
 
     /e/ab12cd34                                   # invitado, evento activo
     /e/ef56gh78                                   # invitado, evento cerrado
+    /p                                            # pantalla sin token: pide 6 dígitos
     /p/64syPN4YFgbJibLfIOlrjI51R0HFlKDm           # pantalla, evento activo
     /p/8MX4OqECds7IhkCmlK7vub76PntouGz1           # pantalla, evento cerrado
     /admin/login                                  # panel
@@ -149,6 +150,19 @@ Fase 4 es que el ZIP tiene que armarse descargando `url`, no resolviendo
 `public_id` contra la cuenta propia de Cloudinary.
 
 ---
+
+## Vincular una tele
+
+El link de la pantalla mide 68 caracteres y no se puede tipear con un control
+remoto. Para eso está el código corto: en el panel, al lado del link de la
+pantalla, hay un botón que genera **seis dígitos**. En la tele se abre `/p` y se
+cargan ahí. Dura diez minutos y sirve una sola vez.
+
+La tele recuerda la vinculación, así que reiniciarla no obliga a repetirla.
+
+Aun así, para un evento de verdad el camino más confiable sigue siendo un
+**cable HDMI** desde una notebook: la tele pasa a ser sólo un monitor y no
+depende del wifi ni del navegador que traiga.
 
 ## Estructura
 

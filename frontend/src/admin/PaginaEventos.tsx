@@ -176,6 +176,7 @@ function ClavesDelEvento({ evento, destacado = false }: { evento: EventoAdmin; d
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <Copiable etiqueta="Link para los invitados (el del QR)" valor={urlInvitado} />
         <Copiable etiqueta="Link de la pantalla" valor={urlPantalla} />
+        <VincularPantalla evento={evento} />
       </div>
       {!destacado && <QrDescargable url={urlInvitado} nombre={evento.nombre} chico />}
     </div>
@@ -213,6 +214,75 @@ function QrDescargable({ url, nombre, chico = false }: { url: string; nombre: st
       <button onClick={bajar} className="text-xs text-tenue underline underline-offset-4 hover:text-white">
         Bajar PNG
       </button>
+    </div>
+  );
+}
+
+/**
+ * El código de seis dígitos para vincular una tele.
+ *
+ * El link de la pantalla mide 68 caracteres. Con una notebook se copia y pega;
+ * con el control remoto de una tele es imposible. Esto lo reemplaza por seis
+ * dígitos, que es lo único que un control hace bien.
+ */
+function VincularPantalla({ evento }: { evento: EventoAdmin }) {
+  const [codigo, setCodigo] = useState<string | null>(null);
+  const [restante, setRestante] = useState(0);
+  const [pidiendo, setPidiendo] = useState(false);
+  const [falla, setFalla] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (restante <= 0) return;
+    const id = window.setTimeout(() => setRestante((s) => s - 1), 1000);
+    return () => window.clearTimeout(id);
+  }, [restante]);
+
+  useEffect(() => {
+    if (restante === 0) setCodigo(null);
+  }, [restante]);
+
+  async function pedirCodigo() {
+    setPidiendo(true);
+    setFalla(null);
+    try {
+      const respuesta = await admin.vincularPantalla(evento.id);
+      setCodigo(respuesta.codigo);
+      setRestante(Math.max(0, Math.round((Date.parse(respuesta.expira_en) - Date.now()) / 1000)));
+    } catch (e) {
+      setFalla(e instanceof ErrorApi ? e.message : "No pudimos generar el código");
+    } finally {
+      setPidiendo(false);
+    }
+  }
+
+  const minutos = Math.floor(restante / 60);
+  const segundos = String(restante % 60).padStart(2, "0");
+
+  return (
+    <div className="min-w-0">
+      <p className="text-xs text-tenue">Vincular una tele o un proyector con navegador</p>
+      {codigo ? (
+        <div className="mt-1 flex flex-wrap items-center gap-3">
+          <code className="rounded-lg bg-fondo px-3 py-1 font-mono text-2xl tracking-widest text-acento">
+            {codigo.slice(0, 3)} {codigo.slice(3)}
+          </code>
+          <span className="text-xs text-tenue">
+            Abrí <strong className="text-white">{window.location.origin}/p</strong> en la tele y
+            cargá estos dígitos · vence en {minutos}:{segundos}
+          </span>
+        </div>
+      ) : (
+        <div className="mt-1 flex items-center gap-2">
+          <button
+            onClick={pedirCodigo}
+            disabled={pidiendo}
+            className="rounded-lg border border-borde px-3 py-1 text-xs hover:border-acento disabled:opacity-50"
+          >
+            {pidiendo ? "Generando…" : "Generar código de 6 dígitos"}
+          </button>
+          {falla && <span className="text-xs text-red-300">{falla}</span>}
+        </div>
+      )}
     </div>
   );
 }

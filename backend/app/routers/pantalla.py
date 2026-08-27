@@ -7,20 +7,25 @@ aislamiento entre eventos simultáneos.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import vinculacion
 from ..database import get_db
 from ..deps import evento_por_token
+from ..errores import Codigo, ErrorApp
 from ..models import Evento, Foto
+from ..ratelimit import permitido
 from ..schemas import (
     ColaPantalla,
     FotoPantalla,
     Pantalla,
     PantallaConfig,
     PantallaEvento,
+    PedidoCanje,
     RespuestaError,
+    TokenDePantalla,
 )
 
 router = APIRouter(prefix="/api/pantalla", tags=["pantalla"])
@@ -101,3 +106,39 @@ def obtener_fotos(
         fotos=fotos,
         ultimo_id=fotos[-1].id if fotos else desde,
     )
+
+
+@router.post(
+    "/canjear",
+    response_model=TokenDePantalla,
+    responses={
+        404: {"model": RespuestaError, "description": "EVENTO_NO_ENCONTRADO"},
+        429: {"model": RespuestaError, "description": "DEMASIADOS_PEDIDOS"},
+    },
+    summary="Canjear un código corto por el token de pantalla",
+)
+def canjear(pedido: PedidoCanje, request: Request) -> TokenDePantalla:
+    """Existe para no tener que tipear 68 caracteres con el control de una tele.
+
+    El límite de pedidos es lo que hace que un código de seis dígitos alcance:
+    con 30 intentos cada 10 minutos por IP contra un millón de combinaciones, la
+    probabilidad de acertar dentro de la ventana de vida del código es de 0,003%.
+    """
+    ip = _ip_del_pedido(request)
+    if not permitido(ip, "canje-de-pantalla"):
+        raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS)
+
+    token = vinculacion.canjear(pedido.codigo)
+    if token is None:
+        # Mismo error para un código inexistente que para uno vencido o ya usado:
+        # distinguirlos le diría a quien prueba al azar cuándo estuvo cerca.
+        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO, "Ese código no sirve. Generá uno nuevo")
+    return TokenDePantalla(token_pantalla=token)
+
+
+def _ip_del_pedido(request: Request) -> str:
+    """Detrás del proxy de Render, request.client.host es el proxy."""
+    reenviada = request.headers.get("x-forwarded-for")
+    if reenviada:
+        return reenviada.split(",")[0].strip()
+    return request.client.host if request.client else "desconocida"

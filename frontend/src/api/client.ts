@@ -7,6 +7,7 @@
 import type {
   ColaPantalla,
   CodigoError,
+  CodigoVinculacion,
   EventoAdmin,
   EventoNuevo,
   EventoPublico,
@@ -23,6 +24,7 @@ import type {
   Resumen,
   Salud,
   Sesion,
+  TokenDePantalla,
 } from "./tipos";
 
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
@@ -145,7 +147,20 @@ export const publico = {
 
 // ── Pantalla ─────────────────────────────────────────────────
 
+const CLAVE_PANTALLA = "transmiti.pantalla";
+
 export const pantalla = {
+  /** Canjea el código de seis dígitos por el token. Es lo que evita tipear 68
+   *  caracteres con el control remoto de una tele. */
+  canjear: async (codigo: string) => {
+    const respuesta = await pedir<TokenDePantalla>("/api/pantalla/canjear", {
+      metodo: "POST",
+      cuerpo: { codigo },
+    });
+    guardarPantalla(respuesta.token_pantalla);
+    return respuesta.token_pantalla;
+  },
+
   config: (token: string, senal?: AbortSignal) =>
     pedir<Pantalla>(`/api/pantalla/${encodeURIComponent(token)}`, { senal }),
 
@@ -160,6 +175,24 @@ export const pantalla = {
 };
 
 // ── Administración ───────────────────────────────────────────
+
+/** El token vinculado queda guardado: la tele no lo vuelve a pedir al reiniciar. */
+export function guardarPantalla(token: string | null): void {
+  try {
+    if (token) window.localStorage.setItem(CLAVE_PANTALLA, token);
+    else window.localStorage.removeItem(CLAVE_PANTALLA);
+  } catch {
+    /* si el navegador de la tele no deja guardar, se vincula de nuevo */
+  }
+}
+
+export function pantallaGuardada(): string | null {
+  try {
+    return window.localStorage.getItem(CLAVE_PANTALLA);
+  } catch {
+    return null;
+  }
+}
 
 export const admin = {
   login: async (credenciales: PedidoLogin) => {
@@ -203,6 +236,12 @@ export const admin = {
       { conAuth: true },
     );
   },
+
+  vincularPantalla: (id: number) =>
+    pedir<CodigoVinculacion>(`/api/admin/eventos/${id}/vincular`, {
+      metodo: "POST",
+      conAuth: true,
+    }),
 
   resumen: (id: number) =>
     pedir<Resumen>(`/api/admin/eventos/${id}/resumen`, { conAuth: true }),

@@ -74,6 +74,20 @@ DEL_CONTRATO = [
     ("POST", "/api/e/{codigo_publico}/fotos"),
 ]
 
+# Endpoints agregados FUERA del contrato de la sección 5, propuestos y aprobados
+# antes de escribirlos como pide la regla 9.
+#
+# Existen porque el link de la pantalla mide 68 caracteres y hay que poder
+# cargarlo con el control remoto de una tele: el panel genera seis dígitos y la
+# tele los canjea por el token.
+#
+# Esta lista es la que hace que el agregado sea deliberado y no un descuido: si
+# aparece un endpoint que no está acá ni en el contrato, la prueba de abajo falla.
+AGREGADOS = [
+    ("POST", "/api/admin/eventos/{id_evento}/vincular"),
+    ("POST", "/api/pantalla/canjear"),
+]
+
 
 def rutas_publicadas(cliente) -> set[tuple[str, str]]:
     esquema = cliente.get("/openapi.json").json()
@@ -91,16 +105,34 @@ def test_los_catorce_endpoints_del_contrato(cliente):
     Se mira el esquema OpenAPI, que es exactamente lo que lista /docs.
     """
     rutas = rutas_publicadas(cliente)
-    del_contrato = sorted(x for x in rutas if x[1] != "/api/salud")
+    del_contrato = sorted(
+        x for x in rutas if x[1] != "/api/salud" and x not in AGREGADOS
+    )
     assert len(del_contrato) == 14, del_contrato
     assert del_contrato == DEL_CONTRATO
     assert ("GET", "/api/salud") in rutas
 
 
 def test_no_hay_endpoints_inventados(cliente):
-    """Regla 9: no inventar endpoints fuera del contrato."""
-    de_mas = rutas_publicadas(cliente) - set(DEL_CONTRATO) - {("GET", "/api/salud")}
+    """Regla 9: no inventar endpoints fuera del contrato.
+
+    Los de AGREGADOS están permitidos porque se propusieron y se aprobaron. Todo
+    lo demás que aparezca acá es un endpoint inventado.
+    """
+    de_mas = (
+        rutas_publicadas(cliente)
+        - set(DEL_CONTRATO)
+        - set(AGREGADOS)
+        - {("GET", "/api/salud")}
+    )
     assert de_mas == set(), f"endpoints fuera del contrato: {sorted(de_mas)}"
+
+
+def test_los_agregados_estan_publicados(cliente):
+    """Si alguno desaparece, la vinculación por código corto dejó de existir."""
+    rutas = rutas_publicadas(cliente)
+    faltan = [x for x in AGREGADOS if x not in rutas]
+    assert faltan == [], faltan
 
 
 def test_los_errores_estan_documentados_en_docs(cliente):

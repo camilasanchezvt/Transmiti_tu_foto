@@ -8,7 +8,7 @@ pestañas abiertas, y eso lo resuelve el panel.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -16,6 +16,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .. import vinculacion
 from ..cloudinary_service import armar_zip, nombre_del_archivo
 from ..database import get_db
 from ..deps import admin_actual, evento_del_admin
@@ -24,6 +25,7 @@ from ..models import Administrador, Evento, Foto
 from ..schemas import (
     CambioEstadoEvento,
     CambioEstadoFoto,
+    CodigoVinculacion,
     EventoAdmin,
     EventoNuevo,
     FotoAdmin,
@@ -195,6 +197,33 @@ def resumen(
     """Es la métrica que el panel muestra arriba y grande durante el evento."""
     evento = evento_del_admin(id_evento, db, admin)
     return Resumen(**_contar(db, [evento.id])[evento.id])
+
+
+@protegido.post(
+    "/eventos/{id_evento}/vincular",
+    response_model=CodigoVinculacion,
+    responses={**_ERROR_404_EVENTO},
+    summary="Código corto para vincular una pantalla",
+)
+def vincular_pantalla(
+    id_evento: int,
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> CodigoVinculacion:
+    """Seis dígitos que la tele canjea por el token, para no tipear 68 caracteres.
+
+    Generar uno nuevo invalida el anterior: dos códigos vivos para la misma
+    pantalla es una puerta abierta de más sin ninguna ventaja.
+    """
+    evento = evento_del_admin(id_evento, db, admin)
+    if evento.estado == "borrador":
+        raise ErrorApp(Codigo.EVENTO_BORRADOR, "Publicá el evento antes de vincular la pantalla")
+
+    codigo, segundos = vinculacion.crear(evento.id, evento.token_pantalla)
+    return CodigoVinculacion(
+        codigo=codigo,
+        expira_en=datetime.now(timezone.utc) + timedelta(seconds=segundos),
+    )
 
 
 # ─────────────────────────────────────────────────────────────
