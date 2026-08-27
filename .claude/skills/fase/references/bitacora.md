@@ -137,6 +137,29 @@ convención de la 3. La 4 no lo usa.
 autorizadas (regla 10) y el algoritmo son cuatro líneas: parámetros ordenados
 alfabéticamente, unidos por `&`, `api_secret` pegado al final, SHA-1.
 
+### La compresión se verificó con fotos reales, no con ruido
+**Fase 6.** El primer intento de medir la compresión usó una imagen de ruido
+aleatorio, que es el peor caso posible para JPEG: dio 673 KB y parecía que el
+criterio no se cumplía. Con fotos de verdad de 4032x3024: 4,23 MB -> 134 KB y
+4,96 MB -> 275 KB, ambas a 1600x1200. Si hay que volver a medir esto, usar
+fotos, no ruido.
+
+### La rotación EXIF se verifica mirando píxeles, no dimensiones
+**Fase 6.** Chrome devuelve dimensiones ya rotadas incluso con
+`imageOrientation: "none"`, así que comparar dimensiones no prueba nada. El
+fixture es una imagen guardada 800x600 apaisada con una franja naranja en el
+borde izquierdo y verde en el derecho, más EXIF Orientation=6. Bien rotada
+queda 600x800 con la naranja ARRIBA y la verde ABAJO, y eso se comprueba
+leyendo el color de dos píxeles.
+
+### Falta probar la subida completa contra Cloudinary
+**Fase 6, pendiente.** Sin cuenta de Cloudinary no se puede probar el recorrido
+entero: firma -> subida -> registro. Lo que sí está verificado es la compresión
+(con fotos reales), la rotación EXIF (a nivel de píxel), el rechazo de video, y
+que `xhr.upload.onprogress` dispara de verdad (11 eventos crecientes con un
+blob de 8 MB). Queda por confirmar en la Fase 9 que los parámetros firmados
+coinciden exactamente con los del FormData.
+
 ---
 
 ## Pendientes de decidir
