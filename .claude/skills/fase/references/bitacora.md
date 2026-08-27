@@ -160,6 +160,28 @@ que `xhr.upload.onprogress` dispara de verdad (11 eventos crecientes con un
 blob de 8 MB). Queda por confirmar en la Fase 9 que los parámetros firmados
 coinciden exactamente con los del FormData.
 
+### El polling incremental deja fotos invisibles para siempre
+**Fase 7. Defecto del contrato, no de la implementación. IMPORTANTE.**
+
+La sección 5 define `desde=N` como "las aprobadas con `id > N`". Pero una foto
+que estaba pendiente tiene un id MENOR que el de las que se aprobaron después.
+Si el moderador la aprueba más tarde, `desde=ultimo_id` no la devuelve nunca y
+esa foto no se proyecta jamás.
+
+Medido con los datos de desarrollo: el arranque en frío deja `ultimo_id` en 18
+y quedan pendientes las fotos 14, 17, 19 y 20. Aprobar la 14 o la 17 no las
+hace aparecer. **Es la mitad de las pendientes**, y le rompe al invitado la
+única promesa del producto.
+
+Mitigado del lado de la pantalla, sin salirse del contrato: cada 5 pasadas se
+pide `desde=0&limite=maximo_buffer` en vez de sólo lo nuevo, y se incorpora lo
+que la pantalla todavía no tiene. Verificado: una foto aprobada fuera de orden
+aparece a los 9 segundos.
+
+**Queda por decidir si se arregla también en el backend.** El arreglo de fondo
+sería que la pantalla avance por orden de moderación y no por id, pero eso
+cambia el significado de `desde` y de `ultimo_id`, o sea el contrato.
+
 ---
 
 ## Pendientes de decidir

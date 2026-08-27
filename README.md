@@ -13,7 +13,8 @@ Cloudinary, registro de fotos con la verificación de carpeta, la cola
 incremental de la pantalla, moderación idempotente, lote y descarga en ZIP por
 streaming. La app del invitado está completa: comprime la foto en el navegador,
 la sube directo a Cloudinary con progreso real y la registra. La pantalla de
-proyección y el panel llegan en las Fases 7 y 8.
+proyección pasa las fotos aprobadas sola, con QR, precarga, pantalla completa y
+recuperación ante cortes de red. El panel llega en la Fase 8.
 
 El frontend lee `VITE_API_URL`. Si no está definida usa `http://localhost:8000`,
 así que en local anda sin configurar nada.
