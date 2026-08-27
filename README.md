@@ -7,10 +7,11 @@ pantalla del salón. Varios eventos a la vez, aislados entre sí.
 La especificación completa está en [CONSTRUIR-APP.md](CONSTRUIR-APP.md). Las
 reglas permanentes para trabajar en el repo están en [CLAUDE.md](CLAUDE.md).
 
-**Estado: Fases 0, 1 y 2 terminadas.** El backend responde los 14 endpoints del
-contrato, con base de datos, modelos y autenticación reales. Los endpoints de
-fotos, moderación y descarga todavía devuelven datos fijos: llegan en las
-Fases 3 y 4. Del frontend todavía no hay nada (Fases 5 a 8).
+**Estado: backend terminado (Fases 0 a 4).** Los 14 endpoints del contrato
+funcionan contra la base: autenticación, firma de Cloudinary, registro de fotos
+con la verificación de carpeta, la cola incremental de la pantalla, moderación
+idempotente, lote y descarga en ZIP por streaming. Del frontend todavía no hay
+nada (Fases 5 a 8).
 
 ---
 

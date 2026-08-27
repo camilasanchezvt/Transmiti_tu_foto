@@ -404,8 +404,11 @@ def test_el_token_de_un_evento_no_muestra_fotos_del_otro(cliente_con_base, event
     assert ids_activo and ids_cerrado
     assert ids_activo.isdisjoint(ids_cerrado)
 
-    assert all(f"eventos/{CODIGO_ACTIVO}/" in f["url"] for f in del_activo)
-    assert all(f"eventos/{CODIGO_CERRADO}/" in f["url"] for f in del_cerrado)
+    # Se comprueba contra la carpeta del public_id, que es lo que ata una foto a
+    # su evento. La URL no sirve para esto: apunta a la nube demo de Cloudinary.
+    for ids, codigo in ((ids_activo, CODIGO_ACTIVO), (ids_cerrado, CODIGO_CERRADO)):
+        carpetas = db.scalars(select(Foto.public_id).where(Foto.id.in_(ids))).all()
+        assert all(p.startswith(f"eventos/{codigo}/") for p in carpetas)
 
 
 def test_no_se_puede_subir_a_un_evento_con_el_codigo_de_otro(cliente_con_base, eventos, db):

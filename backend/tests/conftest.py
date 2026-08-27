@@ -125,9 +125,24 @@ TOKEN_BORRADOR = "B" * 32
 
 URL_BASE = "https://res.cloudinary.com/demo/image/upload"
 
+# Imágenes que existen de verdad en la nube pública `demo` de Cloudinary. Se
+# usan chicas a propósito: la prueba del ZIP las descarga de verdad.
+IMAGENES_REALES = [
+    "couple", "sample", "balloons", "woman", "cld-sample", "flower",
+    "bike", "lady", "horses", "cld-sample-2", "coffee_cup", "yellow_tulip",
+]
+
 
 def url_de(public_id: str) -> str:
+    """URL con la forma que valida el backend. NO resuelve: sirve para probar la
+    validación, no para descargar."""
     return f"{URL_BASE}/v1700000000/{public_id}.jpg"
+
+
+def url_real(indice: int) -> str:
+    """URL que sí devuelve una imagen. La usa el fixture para que la prueba del
+    ZIP baje bytes de verdad."""
+    return f"{URL_BASE}/c_fill,w_400,h_300/{IMAGENES_REALES[indice % len(IMAGENES_REALES)]}.jpg"
 
 
 @pytest.fixture()
@@ -164,12 +179,12 @@ def eventos(limpiar):
     plan = ["aprobada"] * 6 + ["pendiente"] * 2 + ["rechazada"]
     for i, estado in enumerate(plan):
         pid = f"eventos/{CODIGO_ACTIVO}/f{i:02d}"
-        db.add(Foto(evento_id=activo.id, public_id=pid, url=url_de(pid), ancho=1600,
+        db.add(Foto(evento_id=activo.id, public_id=pid, url=url_real(i), ancho=1600,
                     alto=1200, bytes=100000 + i, estado=estado,
                     dispositivo_hash="d" * 32, nombre_invitado=f"Invitado {i}"))
     for i in range(2):
         pid = f"eventos/{CODIGO_CERRADO}/c{i:02d}"
-        db.add(Foto(evento_id=cerrado.id, public_id=pid, url=url_de(pid), ancho=1200,
+        db.add(Foto(evento_id=cerrado.id, public_id=pid, url=url_real(i + 6), ancho=1200,
                     alto=1600, bytes=90000 + i, estado="aprobada",
                     dispositivo_hash="e" * 32, nombre_invitado="Malena"))
     db.commit()

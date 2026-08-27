@@ -1,27 +1,24 @@
 """Endpoints de administración. Base /api/admin. Todos detrás de Bearer.
 
-Cada endpoint dice de qué fase es su implementación. Los que todavía no llegaron
-devuelven datos fijos con la forma exacta del contrato, para que el panel se
-pueda construir en paralelo.
-
-  FASE 2 (real):  login, listado y alta de eventos
-  FASE 4:         cambio de estado, fotos, resumen, moderación, lote y descarga
+Todo lo que se consulta acá se acota por el administrador de la sesión. El
+backend garantiza que las fotos no se mezclen entre eventos; lo que ninguna
+base previene es que el moderador apruebe fotos del evento equivocado con dos
+pestañas abiertas, y eso lo resuelve el panel.
 """
 
 from __future__ import annotations
 
-import io
-import zipfile
-from datetime import date, datetime, timedelta, timezone
-from urllib.parse import quote
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, Response
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from ..cloudinary_service import armar_zip, nombre_del_archivo
 from ..database import get_db
-from ..deps import admin_actual
+from ..deps import admin_actual, evento_del_admin
 from ..errores import Codigo, ErrorApp
 from ..models import Administrador, Evento, Foto
 from ..schemas import (
@@ -55,10 +52,13 @@ protegido = APIRouter(
 )
 
 _ERROR_404_EVENTO = {404: {"model": RespuestaError, "description": "EVENTO_NO_ENCONTRADO"}}
+_ERROR_404_FOTO = {404: {"model": RespuestaError, "description": "FOTO_NO_ENCONTRADA"}}
+
+_PLURAL = {"pendiente": "pendientes", "aprobada": "aprobadas", "rechazada": "rechazadas"}
 
 
 # ─────────────────────────────────────────────────────────────
-# FASE 2 — sesión
+# Sesión
 # ─────────────────────────────────────────────────────────────
 
 @router.post(
@@ -80,7 +80,7 @@ def login(pedido: PedidoLogin, db: Session = Depends(get_db)) -> Sesion:
 
 
 # ─────────────────────────────────────────────────────────────
-# FASE 2 — eventos
+# Eventos
 # ─────────────────────────────────────────────────────────────
 
 def _contar(db: Session, ids_evento: list[int]) -> dict[int, dict[str, int]]:
@@ -94,9 +94,8 @@ def _contar(db: Session, ids_evento: list[int]) -> dict[int, dict[str, int]]:
         .where(Foto.evento_id.in_(ids_evento))
         .group_by(Foto.evento_id, Foto.estado)
     ).all()
-    plural = {"pendiente": "pendientes", "aprobada": "aprobadas", "rechazada": "rechazadas"}
     for evento_id, estado, n in filas:
-        totales[evento_id][plural[estado]] = n
+        totales[evento_id][_PLURAL[estado]] = n
     return totales
 
 
@@ -137,7 +136,7 @@ def crear_evento(
     eventos se crean a la vez y sacan la misma clave, una de las dos inserciones
     falla y se reintenta con claves nuevas.
     """
-    for intento in range(5):
+    for _ in range(5):
         evento = Evento(
             admin_id=admin.id,
             nombre=nuevo.nombre.strip(),
@@ -157,65 +156,50 @@ def crear_evento(
     raise ErrorApp(Codigo.DATOS_INVALIDOS, "No pudimos crear el evento, probá de nuevo")
 
 
-# ─────────────────────────────────────────────────────────────
-# FASE 4 — todavía con datos fijos
-# ─────────────────────────────────────────────────────────────
-
-_BASE_FIJA = "https://res.cloudinary.com/demo/image/upload"
-
-_EVENTO_FIJO = {
-    "id": 1,
-    "nombre": "Casamiento Ana y Juan",
-    "fecha_evento": date(2026, 9, 12),
-    "estado": "activo",
-    "codigo_publico": "ab12cd34",
-    "token_pantalla": "64syPN4YFgbJibLfIOlrjI51R0HFlKDm",
-    "pendientes": 5,
-    "aprobadas": 12,
-    "rechazadas": 3,
-}
-
-_FOTOS_FIJAS: list[dict] = [
-    {"id": 121, "img": "bike", "ancho": 1600, "alto": 1200, "bytes": 254442,
-     "estado": "pendiente", "nombre_invitado": "", "minutos": 82},
-    {"id": 124, "img": "cld-sample-3", "ancho": 1600, "alto": 1200, "bytes": 246604,
-     "estado": "pendiente", "nombre_invitado": "Agustín Iñíguez", "minutos": 40},
-    {"id": 127, "img": "cld-sample-4", "ancho": 1200, "alto": 1600, "bytes": 249215,
-     "estado": "pendiente", "nombre_invitado": "Malén Ibáñez", "minutos": 22},
-    {"id": 129, "img": "cld-sample-5", "ancho": 1600, "alto": 600, "bytes": 78466,
-     "estado": "pendiente", "nombre_invitado": None, "minutos": 10},
-    {"id": 130, "img": "cld-sample", "ancho": 1200, "alto": 1600, "bytes": 225467,
-     "estado": "pendiente", "nombre_invitado": "Martín Peña", "minutos": 4},
-]
-
-
-def _armar_foto_fija(fila: dict) -> FotoAdmin:
-    return FotoAdmin(
-        id=fila["id"],
-        url=f"{_BASE_FIJA}/c_fill,w_{fila['ancho']},h_{fila['alto']}/{fila['img']}.jpg",
-        ancho=fila["ancho"],
-        alto=fila["alto"],
-        bytes=fila["bytes"],
-        estado=fila["estado"],
-        nombre_invitado=fila["nombre_invitado"],
-        subida_en=datetime.now(timezone.utc) - timedelta(minutes=fila["minutos"]),
-    )
-
-
 @protegido.patch(
     "/eventos/{id_evento}",
     response_model=EventoAdmin,
     responses={**_ERROR_404_EVENTO},
     summary="Cambiar el estado de un evento",
 )
-def cambiar_estado_evento(id_evento: int, cambio: CambioEstadoEvento) -> EventoAdmin:
-    """FASE 4."""
-    if id_evento != 1:
-        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
-    evento = dict(_EVENTO_FIJO)
-    evento["estado"] = cambio.estado
-    return EventoAdmin(**evento)
+def cambiar_estado_evento(
+    id_evento: int,
+    cambio: CambioEstadoEvento,
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> EventoAdmin:
+    """Cerrar deja de aceptar fotos, pero la pantalla sigue pasando las aprobadas."""
+    evento = evento_del_admin(id_evento, db, admin)
 
+    if cambio.estado != evento.estado:
+        evento.estado = cambio.estado
+        # Se sella cuándo se cerró; si se reabre, se borra la marca.
+        evento.cerrado_en = datetime.now(timezone.utc) if cambio.estado == "cerrado" else None
+        db.commit()
+        db.refresh(evento)
+
+    return _como_admin(evento, _contar(db, [evento.id])[evento.id])
+
+
+@protegido.get(
+    "/eventos/{id_evento}/resumen",
+    response_model=Resumen,
+    responses={**_ERROR_404_EVENTO},
+    summary="Totales por estado",
+)
+def resumen(
+    id_evento: int,
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> Resumen:
+    """Es la métrica que el panel muestra arriba y grande durante el evento."""
+    evento = evento_del_admin(id_evento, db, admin)
+    return Resumen(**_contar(db, [evento.id])[evento.id])
+
+
+# ─────────────────────────────────────────────────────────────
+# Fotos y moderación
+# ─────────────────────────────────────────────────────────────
 
 @protegido.get(
     "/eventos/{id_evento}/fotos",
@@ -228,49 +212,108 @@ def listar_fotos(
     estado: str | None = Query(default=None, description="pendiente · aprobada · rechazada"),
     desde: int = Query(default=0, ge=0),
     limite: int = Query(default=40, ge=1, le=200),
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
 ) -> ListaFotosAdmin:
-    """FASE 4."""
-    if id_evento != 1:
-        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
-    if estado is not None and estado not in ("pendiente", "aprobada", "rechazada"):
-        raise ErrorApp(Codigo.DATOS_INVALIDOS)
-    elegidas = [f for f in _FOTOS_FIJAS if estado is None or f["estado"] == estado]
-    elegidas = [f for f in elegidas if f["id"] > desde][:limite]
-    fotos = [_armar_foto_fija(f) for f in elegidas]
+    """Ascendente por id, para que el auto-refresco de la bandeja pueda pedir
+    sólo lo nuevo con `desde` sin que se le reordene lo que está mirando."""
+    evento = evento_del_admin(id_evento, db, admin)
+    if estado is not None and estado not in _PLURAL:
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, "Ese estado no existe")
+
+    consulta = select(Foto).where(Foto.evento_id == evento.id)
+    if estado is not None:
+        consulta = consulta.where(Foto.estado == estado)
+    if desde:
+        consulta = consulta.where(Foto.id > desde)
+
+    filas = list(db.scalars(consulta.order_by(Foto.id).limit(limite)))
+    fotos = [
+        FotoAdmin(
+            id=f.id, url=f.url, ancho=f.ancho, alto=f.alto, bytes=f.bytes,
+            estado=f.estado, nombre_invitado=f.nombre_invitado, subida_en=f.subida_en,
+        )
+        for f in filas
+    ]
     return ListaFotosAdmin(fotos=fotos, ultimo_id=fotos[-1].id if fotos else desde)
 
 
-@protegido.get(
-    "/eventos/{id_evento}/resumen",
-    response_model=Resumen,
-    responses={**_ERROR_404_EVENTO},
-    summary="Totales por estado",
-)
-def resumen(id_evento: int) -> Resumen:
-    """FASE 4."""
-    if id_evento != 1:
-        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
-    return Resumen(pendientes=5, aprobadas=12, rechazadas=3)
+def _foto_del_admin(id_foto: int, db: Session, admin: Administrador) -> Foto:
+    """Nadie modera fotos de un evento que no es suyo."""
+    foto = db.scalar(
+        select(Foto).join(Evento, Evento.id == Foto.evento_id)
+        .where(Foto.id == id_foto, Evento.admin_id == admin.id)
+    )
+    if foto is None:
+        raise ErrorApp(Codigo.FOTO_NO_ENCONTRADA)
+    return foto
 
 
 @protegido.patch(
     "/fotos/{id_foto}",
     response_model=FotoModerada,
-    responses={404: {"model": RespuestaError, "description": "FOTO_NO_ENCONTRADA"}},
+    responses={**_ERROR_404_FOTO},
     summary="Moderar una foto",
 )
-def moderar_foto(id_foto: int, cambio: CambioEstadoFoto) -> FotoModerada:
-    """FASE 4. Idempotente: aprobar dos veces no cambia nada la segunda vez."""
-    if id_foto <= 0:
-        raise ErrorApp(Codigo.FOTO_NO_ENCONTRADA)
-    return FotoModerada(id=id_foto, estado=cambio.estado)
+def moderar_foto(
+    id_foto: int,
+    cambio: CambioEstadoFoto,
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> FotoModerada:
+    """Idempotente: si ya está en ese estado no se toca nada, ni siquiera la
+    marca de cuándo se moderó. Aprobar dos veces no cambia nada la segunda vez.
+
+    Rechazar es un estado, no un DELETE: la foto sigue existiendo y se puede
+    revertir con la tecla de deshacer del panel.
+    """
+    foto = _foto_del_admin(id_foto, db, admin)
+    if foto.estado != cambio.estado:
+        foto.estado = cambio.estado
+        foto.moderada_en = datetime.now(timezone.utc)
+        foto.moderada_por = admin.id
+        db.commit()
+        db.refresh(foto)
+    return FotoModerada(id=foto.id, estado=foto.estado)
 
 
 @protegido.post("/fotos/lote", response_model=ResultadoLote, summary="Moderar en lote")
-def moderar_lote(lote: LoteModeracion) -> ResultadoLote:
-    """FASE 4. Una sola llamada para la ráfaga de veinte fotos casi todas buenas."""
-    return ResultadoLote(afectadas=len(lote.ids))
+def moderar_lote(
+    lote: LoteModeracion,
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> ResultadoLote:
+    """Un solo pedido para la ráfaga de veinte fotos casi todas buenas.
 
+    `afectadas` cuenta las que realmente cambiaron de estado. Repetir el mismo
+    lote devuelve 0: es la misma idempotencia que la moderación de a una.
+
+    Las fotos de otro administrador se ignoran en silencio en vez de dar error:
+    un id ajeno en la lista no puede impedir que se moderen los propios.
+    """
+    propias = select(Foto.id).join(Evento, Evento.id == Foto.evento_id).where(
+        Foto.id.in_(lote.ids), Evento.admin_id == admin.id, Foto.estado != lote.estado
+    )
+    ids = list(db.scalars(propias))
+    if not ids:
+        return ResultadoLote(afectadas=0)
+
+    db.execute(
+        update(Foto)
+        .where(Foto.id.in_(ids))
+        .values(
+            estado=lote.estado,
+            moderada_en=datetime.now(timezone.utc),
+            moderada_por=admin.id,
+        )
+    )
+    db.commit()
+    return ResultadoLote(afectadas=len(ids))
+
+
+# ─────────────────────────────────────────────────────────────
+# Descarga
+# ─────────────────────────────────────────────────────────────
 
 @protegido.get(
     "/eventos/{id_evento}/descarga",
@@ -280,23 +323,43 @@ def moderar_lote(lote: LoteModeracion) -> ResultadoLote:
 def descargar(
     id_evento: int,
     incluir: str = Query(default="aprobadas", pattern="^(aprobadas|todas)$"),
-) -> Response:
-    """FASE 4. El archivo se nombra con el evento y la fecha, no con un identificador."""
-    if id_evento != 1:
-        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> StreamingResponse:
+    """El ZIP se arma y se manda al mismo tiempo, sin juntarlo en memoria.
 
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr(
-            "LEEME.txt",
-            "El ZIP con las fotos llega en la Fase 4.\n"
-            f"Evento: {_EVENTO_FIJO['nombre']}\nIncluir: {incluir}\n",
-        )
+    Con doscientas fotos de 300 KB, juntarlo entero serían 60 MB retenidos
+    mientras dura la descarga, y el servicio gratuito de Render se queda sin
+    memoria y se reinicia.
 
-    nombre = f"{_EVENTO_FIJO['nombre']} - {_EVENTO_FIJO['fecha_evento'].isoformat()}.zip"
-    disposicion = "attachment; filename*=UTF-8''" + quote(nombre)
-    return Response(
-        content=buffer.getvalue(),
+    Las filas se leen ANTES de empezar a mandar: la sesión de base se cierra
+    cuando termina de resolverse la respuesta, y el generador sigue corriendo
+    después. Si consultara adentro, lo haría sobre una sesión ya cerrada.
+    """
+    evento = evento_del_admin(id_evento, db, admin)
+
+    consulta = select(Foto.nombre_invitado, Foto.url).where(Foto.evento_id == evento.id)
+    if incluir == "aprobadas":
+        consulta = consulta.where(Foto.estado == "aprobada")
+    # `todas` son todas, también las rechazadas. Una foto puede haberse
+    # rechazado por no ser buena para proyectar y aun así los novios la quieren.
+
+    fotos = [(nombre, url) for nombre, url in db.execute(consulta.order_by(Foto.id)).all()]
+
+    nombre = nombre_del_archivo(evento.nombre, evento.fecha_evento)
+    return StreamingResponse(
+        armar_zip(fotos),
         media_type="application/zip",
-        headers={"Content-Disposition": disposicion},
+        headers={
+            "Content-Disposition": _disposicion(nombre),
+            # Sin esto, algunos proxies bufferean el ZIP entero y se pierde el
+            # sentido de armarlo en streaming.
+            "X-Accel-Buffering": "no",
+        },
     )
+
+
+def _disposicion(nombre: str) -> str:
+    from urllib.parse import quote
+
+    return "attachment; filename*=UTF-8''" + quote(nombre)

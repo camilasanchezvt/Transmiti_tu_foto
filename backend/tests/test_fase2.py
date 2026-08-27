@@ -209,35 +209,3 @@ def test_un_admin_no_ve_los_eventos_de_otro(autorizado, db):
     nombres = [e["nombre"] for e in autorizado.get("/api/admin/eventos").json()]
     assert "Mío" in nombres
     assert "Ajeno" not in nombres
-
-
-# ─────────────────────────────────────────────────────────────
-# Los endpoints que todavía son de la Fase 4: sólo se verifica la forma
-# ─────────────────────────────────────────────────────────────
-
-def test_forma_de_los_endpoints_pendientes(autorizado):
-    r = autorizado.get("/api/admin/eventos/1/resumen")
-    assert set(r.json().keys()) == {"pendientes", "aprobadas", "rechazadas"}
-
-    r = autorizado.get("/api/admin/eventos/1/fotos?estado=pendiente")
-    assert set(r.json().keys()) == {"fotos", "ultimo_id"}
-    assert set(r.json()["fotos"][0].keys()) == {
-        "id", "url", "ancho", "alto", "bytes", "estado", "nombre_invitado", "subida_en"
-    }
-
-    r = autorizado.patch("/api/admin/fotos/121", json={"estado": "aprobada"})
-    assert set(r.json().keys()) == {"id", "estado"}
-
-    r = autorizado.post("/api/admin/fotos/lote", json={"ids": [1, 2, 3], "estado": "aprobada"})
-    assert r.json() == {"afectadas": 3}
-
-    r = autorizado.get("/api/admin/eventos/1/descarga?incluir=aprobadas")
-    assert r.headers["content-type"] == "application/zip"
-    assert r.content[:2] == b"PK"
-
-
-def test_moderar_es_idempotente(autorizado):
-    a = autorizado.patch("/api/admin/fotos/121", json={"estado": "aprobada"})
-    b = autorizado.patch("/api/admin/fotos/121", json={"estado": "aprobada"})
-    assert a.status_code == b.status_code == 200
-    assert a.json() == b.json()
