@@ -129,7 +129,7 @@ export default function PaginaCierre() {
       <section className="rounded-2xl border border-borde bg-panel p-5">
         <h2 className="mb-2 text-lg font-semibold">Descargar las fotos</h2>
         <p className="mb-4 text-sm text-tenue">
-          {total} fotos en total. Doscientas fotos no salen en dos segundos: el
+          {total === 1 ? "1 foto" : `${total} fotos`} en total. Doscientas fotos no salen en dos segundos: el
           archivo se arma mientras se descarga.
         </p>
         <div className="flex flex-wrap gap-3">

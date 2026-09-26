@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import QRCode from "qrcode";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
 import type { EventoAdmin } from "../api/tipos";
 import Boton from "../comp/Boton";
 import Cargando from "../comp/Cargando";
 import MensajeError from "../comp/MensajeError";
+import { dibujarQR } from "../lib/qr";
 import { colorDelEvento } from "./color";
 
 export default function PaginaEventos() {
@@ -127,7 +127,7 @@ export default function PaginaEventos() {
                 <div className="flex items-center gap-4">
                   <p className="text-sm">
                     <strong className="text-xl text-acento">{e.pendientes}</strong>
-                    <span className="text-tenue"> pendientes</span>
+                    <span className="text-tenue">{e.pendientes === 1 ? " pendiente" : " pendientes"}</span>
                   </p>
                   <Link
                     to={`/admin/eventos/${e.id}/moderar`}
@@ -185,18 +185,12 @@ function ClavesDelEvento({ evento, destacado = false }: { evento: EventoAdmin; d
 
 function QrDescargable({ url, nombre, chico = false }: { url: string; nombre: string; chico?: boolean }) {
   const lienzo = useRef<HTMLCanvasElement>(null);
-  const lado = chico ? 96 : 220;
 
   useEffect(() => {
     if (!lienzo.current) return;
-    QRCode.toCanvas(lienzo.current, url, {
-      // Se dibuja grande siempre y se muestra chico por CSS: el PNG que se baja
-      // tiene que servir para imprimir, no para la pantalla.
-      width: 1024,
-      margin: 2,
-      errorCorrectionLevel: "M",
-      color: { dark: "#000000", light: "#ffffff" },
-    }).catch(() => {});
+    // Se dibuja grande siempre y se muestra chico por CSS: el PNG que se baja
+    // tiene que servir para imprimir, no para la pantalla.
+    dibujarQR(lienzo.current, url, 1024).catch(() => {});
   }, [url]);
 
   function bajar() {
@@ -210,7 +204,7 @@ function QrDescargable({ url, nombre, chico = false }: { url: string; nombre: st
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <canvas ref={lienzo} style={{ width: lado, height: lado }} className="rounded-xl bg-white" />
+      <canvas ref={lienzo} className={`rounded-xl bg-white ${chico ? "h-24 w-24" : "h-[220px] w-[220px]"}`} />
       <button onClick={bajar} className="text-xs text-tenue underline underline-offset-4 hover:text-white">
         Bajar PNG
       </button>

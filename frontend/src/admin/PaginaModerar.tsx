@@ -248,7 +248,7 @@ export default function PaginaModerar() {
         <div className="flex items-center gap-6">
           <p className="text-right">
             <strong className="text-4xl tabular-nums" style={{ color }}>{fotos.length}</strong>
-            <span className="ml-2 text-tenue">pendientes</span>
+            <span className="ml-2 text-tenue">{fotos.length === 1 ? "pendiente" : "pendientes"}</span>
           </p>
           <Link to="/admin" className="text-sm text-tenue underline underline-offset-4 hover:text-white">
             Eventos
@@ -318,7 +318,9 @@ export default function PaginaModerar() {
         <kbd className="text-white">Z</kbd> deshacer · Shift+click para seleccionar varias
         {seleccion.size > 0 && (
           <span className="ml-3 text-acento">
-            {seleccion.size} seleccionadas · A o R las modera todas juntas
+            {seleccion.size === 1
+              ? "1 seleccionada · A o R la modera"
+              : `${seleccion.size} seleccionadas · A o R las modera todas juntas`}
           </span>
         )}
       </footer>

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import QRCode from "qrcode";
+
+import { dibujarQR } from "../lib/qr";
 
 interface Props {
   /** La URL completa que se codifica, no sólo el código. */
@@ -23,14 +24,7 @@ export default function QR({ url, lado, className = "" }: Props) {
 
   useEffect(() => {
     if (!lienzo.current) return;
-    QRCode.toCanvas(lienzo.current, url, {
-      width: lado,
-      margin: 2,
-      // Corrección media: aguanta que el proyector desenfoque un poco los
-      // bordes sin agrandar demasiado el código.
-      errorCorrectionLevel: "M",
-      color: { dark: "#000000", light: "#ffffff" },
-    }).catch(() => {
+    dibujarQR(lienzo.current, url, lado).catch(() => {
       /* una URL imposible de codificar no puede tirar abajo la pantalla */
     });
   }, [url, lado]);

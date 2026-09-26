@@ -211,6 +211,24 @@ aprobada antes de escribirla como pide la regla 10. En el panel se dibuja
 siempre a 1024 px y se muestra chico por CSS: el PNG que se baja tiene que
 servir para imprimir, no para la pantalla.
 
+### `qrcode` le fija el tamaño al canvas con estilos en línea
+**Fuera de fase, 16-sep-2026.** `QRCode.toCanvas` escribe `style.width` y
+`style.height` en píxeles, y un estilo en línea le gana a cualquier clase. En el
+panel el QR de cada tarjeta se veía a 1024 px, desbordaba y tapaba el segundo
+evento. En la pantalla, `w-[38vmin]` y `w-[13vmin]` quedaban anuladas y el QR se
+veía a 520 y 220 px. Salió al sacar capturas para la presentación.
+
+Ahora todo QR se dibuja con `dibujarQR` (`frontend/src/lib/qr.ts`), que borra esos
+dos estilos después de dibujar: el tamaño en pantalla lo deciden las clases del
+canvas. Verificado en el navegador: el del panel mide 96 px con el mapa de bits de
+1024 y el de la esquina de la pantalla, 13vmin justos.
+
+### El campo de seis dígitos de `/p` mide 12ch
+**Fuera de fase, 16-sep-2026.** Con `w-[9ch]`, más `tracking-[0.2em]`, el relleno
+y el borde, los seis dígitos no entraban: se cortaba el último del placeholder y,
+al escribir, el texto se corría y tapaba el primero. Con `w-[12ch]` entran
+«000000» y también «800 181» con espacio, medido con `scrollWidth`.
+
 ### Se agregaron DOS endpoints fuera del contrato: vinculación por código corto
 **Fuera de fase. Propuesto y aprobado antes de escribirlo, como pide la regla 9.**
 

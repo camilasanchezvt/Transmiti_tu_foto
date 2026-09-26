@@ -70,7 +70,9 @@ export default function PaginaVincular({ onVinculada }: Props) {
           autoComplete="off"
           placeholder="000000"
           aria-label="Código de seis dígitos"
-          className="w-[9ch] rounded-2xl border-4 border-borde bg-panel px-6 py-4 text-center font-mono text-6xl tracking-[0.2em] text-white outline-none focus:border-acento"
+          // 12ch y no menos: con `tracking-[0.2em]`, el relleno y el borde, en 9ch
+          // se cortaba el último dígito. Así entra también «800 181» con espacio.
+          className="w-[12ch] rounded-2xl border-4 border-borde bg-panel px-6 py-4 text-center font-mono text-6xl tracking-[0.2em] text-white outline-none focus:border-acento"
         />
 
         <button
