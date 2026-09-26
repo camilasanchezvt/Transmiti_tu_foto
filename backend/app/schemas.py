@@ -204,6 +204,20 @@ class EventoAdmin(BaseModel):
     rechazadas: int
 
 
+class VideoEvento(BaseModel):
+    """GET y POST /api/admin/eventos/{id}/video
+
+    `ninguno`: nunca se pidió. `procesando`: Cloudinary lo está armando.
+    `listo`: `url` apunta al MP4. `fallo`: Cloudinary no lo aceptó o no lo
+    terminó a tiempo; se puede volver a pedir.
+    """
+
+    estado: Literal["ninguno", "procesando", "listo", "fallo"]
+    url: str | None
+    fotos: int | None
+    pedido_en: datetime | None
+
+
 class FotoAdmin(BaseModel):
     """Una foto vista desde la bandeja de moderación."""
 

@@ -22,7 +22,13 @@ CREATE TABLE eventos (
   max_fotos_por_dispositivo int NOT NULL DEFAULT 10,
   segundos_por_foto         int NOT NULL DEFAULT 7,
   creado_en      timestamptz NOT NULL DEFAULT now(),
-  cerrado_en     timestamptz
+  cerrado_en     timestamptz,
+  -- El video del evento, que arma Cloudinary en segundo plano.
+  video_estado    text CHECK (video_estado IN ('procesando','listo','fallo')),
+  video_public_id text,
+  video_url       text,
+  video_fotos     int,
+  video_pedido_en timestamptz
 );
 
 CREATE TABLE fotos (

@@ -8,6 +8,7 @@ pestañas abiertas, y eso lo resuelve el panel.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
@@ -17,7 +18,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import vinculacion
-from ..cloudinary_service import armar_zip, nombre_del_archivo
+from ..cloudinary_service import (
+    ErrorVideo,
+    armar_zip,
+    consultar_video,
+    elegir_fotos_para_video,
+    nombre_del_archivo,
+    pedir_video,
+)
 from ..database import get_db
 from ..deps import admin_actual, evento_del_admin
 from ..errores import Codigo, ErrorApp
@@ -37,6 +45,7 @@ from ..schemas import (
     Resumen,
     ResultadoLote,
     Sesion,
+    VideoEvento,
 )
 from ..security import (
     crear_token,
@@ -57,6 +66,8 @@ _ERROR_404_EVENTO = {404: {"model": RespuestaError, "description": "EVENTO_NO_EN
 _ERROR_404_FOTO = {404: {"model": RespuestaError, "description": "FOTO_NO_ENCONTRADA"}}
 
 _PLURAL = {"pendiente": "pendientes", "aprobada": "aprobadas", "rechazada": "rechazadas"}
+
+log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -357,6 +368,104 @@ def moderar_lote(
     )
     db.commit()
     return ResultadoLote(afectadas=len(ids))
+
+
+# ─────────────────────────────────────────────────────────────
+# Video del evento
+# ─────────────────────────────────────────────────────────────
+
+# Si en este tiempo Cloudinary no lo terminó, se da por fallido y se puede
+# volver a pedir. Sin tope, un pedido perdido dejaría el botón trabado.
+_PLAZO_VIDEO = timedelta(minutes=30)
+
+
+def _como_video(evento: Evento) -> VideoEvento:
+    return VideoEvento(
+        estado=evento.video_estado or "ninguno",
+        url=evento.video_url if evento.video_estado == "listo" else None,
+        fotos=evento.video_fotos,
+        pedido_en=evento.video_pedido_en,
+    )
+
+
+@protegido.get(
+    "/eventos/{id_evento}/video",
+    response_model=VideoEvento,
+    responses={**_ERROR_404_EVENTO},
+    summary="Estado del video del evento",
+)
+def ver_video(
+    id_evento: int,
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> VideoEvento:
+    """Mientras está `procesando`, cada consulta le pregunta a Cloudinary."""
+    evento = evento_del_admin(id_evento, db, admin)
+
+    if evento.video_estado == "procesando" and evento.video_public_id:
+        url = consultar_video(evento.video_public_id)
+        if url:
+            evento.video_estado = "listo"
+            evento.video_url = url
+            db.commit()
+        elif evento.video_pedido_en and datetime.now(timezone.utc) - evento.video_pedido_en > _PLAZO_VIDEO:
+            log.warning("video %s: Cloudinary no lo terminó en %s", evento.video_public_id, _PLAZO_VIDEO)
+            evento.video_estado = "fallo"
+            db.commit()
+
+    return _como_video(evento)
+
+
+@protegido.post(
+    "/eventos/{id_evento}/video",
+    response_model=VideoEvento,
+    status_code=202,
+    responses={**_ERROR_404_EVENTO, 422: {"model": RespuestaError, "description": "DATOS_INVALIDOS"}},
+    summary="Armar el video del evento",
+)
+def armar_video(
+    id_evento: int,
+    db: Session = Depends(get_db),
+    admin: Administrador = Depends(admin_actual),
+) -> VideoEvento:
+    """Arma un video con las fotos aprobadas, en orden de llegada.
+
+    Si ya hay uno en proceso, no se pide otro: devuelve el que está en curso.
+    Así un doble clic no gasta créditos de Cloudinary dos veces.
+    """
+    evento = evento_del_admin(id_evento, db, admin)
+
+    en_curso = (
+        evento.video_estado == "procesando"
+        and evento.video_pedido_en is not None
+        and datetime.now(timezone.utc) - evento.video_pedido_en <= _PLAZO_VIDEO
+    )
+    if en_curso:
+        return _como_video(evento)
+
+    aprobadas = list(
+        db.scalars(
+            select(Foto.public_id)
+            .where(Foto.evento_id == evento.id, Foto.estado == "aprobada")
+            .order_by(Foto.id)
+        )
+    )
+    if not aprobadas:
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, "Todavía no hay fotos aprobadas para armar el video")
+
+    elegidas = elegir_fotos_para_video(aprobadas)
+    evento.video_pedido_en = datetime.now(timezone.utc)
+    evento.video_fotos = len(elegidas)
+    evento.video_url = None
+    try:
+        evento.video_public_id = pedir_video(evento.codigo_publico, elegidas)
+        evento.video_estado = "procesando"
+    except ErrorVideo as e:
+        log.error("video del evento %s: %s", evento.id, e)
+        evento.video_public_id = None
+        evento.video_estado = "fallo"
+    db.commit()
+    return _como_video(evento)
 
 
 # ─────────────────────────────────────────────────────────────

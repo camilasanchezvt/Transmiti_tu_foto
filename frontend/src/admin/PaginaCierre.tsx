@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
-import type { EventoAdmin } from "../api/tipos";
+import type { EventoAdmin, VideoEvento } from "../api/tipos";
 import Boton from "../comp/Boton";
 import Cargando from "../comp/Cargando";
 import MensajeError from "../comp/MensajeError";
@@ -128,6 +128,8 @@ export default function PaginaCierre() {
 
       <Configuracion evento={evento} onGuardado={setEvento} />
 
+      <VideoDelEvento idEvento={evento.id} aprobadas={evento.aprobadas} />
+
       <section className="rounded-2xl border border-borde bg-panel p-5">
         <h2 className="mb-2 text-lg font-semibold">Descargar las fotos</h2>
         <p className="mb-4 text-sm text-tenue">
@@ -227,5 +229,98 @@ function Configuracion({ evento, onGuardado }: { evento: EventoAdmin; onGuardado
       )}
       {error ? <div className="mt-4"><MensajeError error={error} /></div> : null}
     </form>
+  );
+}
+
+/** Cada cuánto se pregunta si Cloudinary ya terminó el video. */
+const CONSULTA_VIDEO_MS = 10_000;
+
+/** `fl_attachment` hace que Cloudinary lo mande como descarga y no lo reproduzca. */
+function urlDeDescarga(url: string): string {
+  return url.replace("/video/upload/", "/video/upload/fl_attachment/");
+}
+
+function VideoDelEvento({ idEvento, aprobadas }: { idEvento: number; aprobadas: number }) {
+  const [video, setVideo] = useState<VideoEvento | null>(null);
+  const [pidiendo, setPidiendo] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    admin.video(idEvento).then((v) => vivo && setVideo(v)).catch((e) => vivo && setError(e));
+    return () => {
+      vivo = false;
+    };
+  }, [idEvento]);
+
+  // Mientras Cloudinary lo arma, se pregunta cada tanto. Cada consulta hace que
+  // el backend le pregunte a Cloudinary; no hay aviso del otro lado.
+  useEffect(() => {
+    if (video?.estado !== "procesando") return;
+    const id = window.setInterval(() => {
+      admin.video(idEvento).then(setVideo).catch(() => {});
+    }, CONSULTA_VIDEO_MS);
+    return () => window.clearInterval(id);
+  }, [idEvento, video?.estado]);
+
+  async function armar() {
+    setPidiendo(true);
+    setError(null);
+    try {
+      setVideo(await admin.armarVideo(idEvento));
+    } catch (e) {
+      setError(e);
+    } finally {
+      setPidiendo(false);
+    }
+  }
+
+  const estado = video?.estado ?? "ninguno";
+  const segundos = aprobadas * 3;
+
+  return (
+    <section className="mb-8 rounded-2xl border border-borde bg-panel p-5">
+      <h2 className="mb-2 text-lg font-semibold">Video del evento</h2>
+      <p className="mb-4 text-sm text-tenue">
+        Un video con las fotos aprobadas, en el orden en que llegaron, 3 segundos cada una.
+        {aprobadas > 150 && " Si pasan de 150, se eligen repartidas a lo largo de la noche."}
+      </p>
+
+      {estado === "procesando" && (
+        <p className="mb-4 text-sm text-acento">
+          Armando el video con {video?.fotos} fotos… puede tardar unos minutos. Podés salir de esta
+          página: cuando vuelvas va a estar acá.
+        </p>
+      )}
+      {estado === "fallo" && (
+        <p className="mb-4 text-sm text-acento">No se pudo armar el video. Probá de nuevo.</p>
+      )}
+      {estado === "listo" && video?.url && (
+        <div className="mb-4">
+          <video src={video.url} controls className="mb-3 w-full rounded-xl bg-black" />
+          <a
+            href={urlDeDescarga(video.url)}
+            className="inline-block rounded-xl border border-borde px-4 py-2 text-sm hover:border-acento"
+          >
+            Descargar video ({video.fotos} fotos)
+          </a>
+        </div>
+      )}
+
+      {estado !== "procesando" && (
+        <div className="w-56">
+          <Boton
+            variante={estado === "listo" ? "secundario" : "principal"}
+            cargando={pidiendo}
+            disabled={aprobadas === 0}
+            onClick={armar}
+          >
+            {estado === "listo" ? "Volver a armarlo" : `Armar video (${Math.min(segundos, 450)} s)`}
+          </Boton>
+        </div>
+      )}
+      {aprobadas === 0 && <p className="mt-3 text-sm text-tenue">Aprobá fotos para poder armarlo.</p>}
+      {error ? <div className="mt-4"><MensajeError error={error} /></div> : null}
+    </section>
   );
 }

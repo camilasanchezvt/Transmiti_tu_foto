@@ -54,6 +54,9 @@ class Evento(Base):
         CheckConstraint(
             "estado IN ('borrador','activo','cerrado')", name="eventos_estado_check"
         ),
+        CheckConstraint(
+            "video_estado IN ('procesando','listo','fallo')", name="eventos_video_estado_check"
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -82,6 +85,14 @@ class Evento(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     cerrado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # El video del evento lo arma Cloudinary en segundo plano. Cada pedido usa un
+    # public_id nuevo: nada se sobrescribe y el anterior queda disponible.
+    video_estado: Mapped[str | None] = mapped_column(Text)
+    video_public_id: Mapped[str | None] = mapped_column(Text)
+    video_url: Mapped[str | None] = mapped_column(Text)
+    video_fotos: Mapped[int | None] = mapped_column(Integer)
+    video_pedido_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     admin: Mapped[Administrador] = relationship(back_populates="eventos")
     fotos: Mapped[list["Foto"]] = relationship(

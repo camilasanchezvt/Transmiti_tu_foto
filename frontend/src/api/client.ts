@@ -25,6 +25,7 @@ import type {
   Resumen,
   Salud,
   Sesion,
+  VideoEvento,
   TokenDePantalla,
 } from "./tipos";
 
@@ -222,6 +223,12 @@ export const admin = {
       cuerpo: { estado },
       conAuth: true,
     }),
+
+  video: (id: number) =>
+    pedir<VideoEvento>(`/api/admin/eventos/${id}/video`, { conAuth: true }),
+
+  armarVideo: (id: number) =>
+    pedir<VideoEvento>(`/api/admin/eventos/${id}/video`, { metodo: "POST", conAuth: true }),
 
   configurarEvento: (id: number, cambio: CambioEvento) =>
     pedir<EventoAdmin>(`/api/admin/eventos/${id}`, {

@@ -86,6 +86,10 @@ DEL_CONTRATO = [
 AGREGADOS = [
     ("POST", "/api/admin/eventos/{id_evento}/vincular"),
     ("POST", "/api/pantalla/canjear"),
+    # El video del evento: Cloudinary lo arma en segundo plano con las aprobadas
+    # (create_slideshow) y el panel consulta hasta que está listo.
+    ("GET", "/api/admin/eventos/{id_evento}/video"),
+    ("POST", "/api/admin/eventos/{id_evento}/video"),
 ]
 
 

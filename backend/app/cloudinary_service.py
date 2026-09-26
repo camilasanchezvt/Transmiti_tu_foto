@@ -201,3 +201,112 @@ def nombre_del_archivo(nombre_evento: str, fecha) -> str:
     """El archivo se nombra con el evento y la fecha, no con un identificador."""
     limpio = _limpiar_nombre(nombre_evento).strip() or "evento"
     return f"{limpio} - {fecha.isoformat()}.zip"
+
+
+# ─────────────────────────────────────────────────────────────
+# Video del evento (create_slideshow, en beta en Cloudinary)
+# ─────────────────────────────────────────────────────────────
+
+API_CLOUDINARY = "https://api.cloudinary.com/v1_1"
+
+# Cloudinary no publica un tope de diapositivas. 150 fotos a 3 s son 7 minutos
+# y medio: más largo que eso ya no se mira entero.
+MAX_FOTOS_VIDEO = 150
+VIDEO_ANCHO, VIDEO_ALTO = 1280, 720
+VIDEO_MS_POR_FOTO = 3000
+VIDEO_MS_TRANSICION = 800
+
+
+def elegir_fotos_para_video(public_ids: list[str], tope: int = MAX_FOTOS_VIDEO) -> list[str]:
+    """Todas si entran. Si sobran, se eligen repartidas a lo largo de la noche,
+    no las primeras: el video tiene que contar el evento de punta a punta."""
+    if len(public_ids) <= tope:
+        return list(public_ids)
+    if tope == 1:
+        return [public_ids[0]]
+    ultimo = len(public_ids) - 1
+    return [public_ids[round(i * ultimo / (tope - 1))] for i in range(tope)]
+
+
+def manifiesto_video(public_ids: list[str]) -> str:
+    """El manifest_json de create_slideshow. Los tiempos van en milisegundos
+    salvo `du`, la duración total, que va en segundos."""
+    import json
+
+    duracion = max(1, round(len(public_ids) * VIDEO_MS_POR_FOTO / 1000))
+    return json.dumps(
+        {
+            "w": VIDEO_ANCHO,
+            "h": VIDEO_ALTO,
+            "du": duracion,
+            "vars": {
+                "sdur": VIDEO_MS_POR_FOTO,
+                "tdur": VIDEO_MS_TRANSICION,
+                "slides": [{"media": f"i:{p}"} for p in public_ids],
+            },
+        },
+        separators=(",", ":"),
+    )
+
+
+def _firmar_parametros(parametros: dict[str, str | int]) -> str:
+    """Mismo algoritmo que `firmar`: orden alfabético, unidos por &, secreto al final."""
+    a_firmar = "&".join(f"{k}={parametros[k]}" for k in sorted(parametros))
+    return hashlib.sha1((a_firmar + config.CLOUDINARY_API_SECRET).encode("utf-8")).hexdigest()
+
+
+def pedir_video(codigo_publico: str, public_ids: list[str], momento: int | None = None) -> str:
+    """Le pide a Cloudinary que arme el video. Devuelve su public_id.
+
+    Es asincrónico: Cloudinary responde "processing" enseguida y el MP4 aparece
+    minutos después. `consultar_video` dice cuándo está.
+    """
+    import httpx
+
+    timestamp = int(time.time()) if momento is None else momento
+    parametros: dict[str, str | int] = {
+        "manifest_json": manifiesto_video(public_ids),
+        "public_id": f"{carpeta_del_evento(codigo_publico)}/video-{timestamp}",
+        "timestamp": timestamp,
+    }
+    cuerpo = {
+        **parametros,
+        "signature": _firmar_parametros(parametros),
+        "api_key": config.CLOUDINARY_API_KEY,
+    }
+    try:
+        respuesta = httpx.post(
+            f"{API_CLOUDINARY}/{config.CLOUDINARY_CLOUD_NAME}/video/create_slideshow",
+            data=cuerpo,
+            timeout=30.0,
+        )
+    except httpx.HTTPError as e:
+        raise ErrorVideo(f"sin respuesta de Cloudinary: {e}") from e
+    if respuesta.status_code >= 400:
+        raise ErrorVideo(f"Cloudinary respondió {respuesta.status_code}: {respuesta.text[:500]}")
+    return str(parametros["public_id"])
+
+
+def consultar_video(public_id: str) -> str | None:
+    """La URL del MP4 si ya está listo; None si todavía no existe.
+
+    Usa la Admin API con el secreto, así que sólo corre acá. Un error de red se
+    trata como "todavía no": el panel vuelve a preguntar en unos segundos.
+    """
+    import httpx
+
+    try:
+        respuesta = httpx.get(
+            f"{API_CLOUDINARY}/{config.CLOUDINARY_CLOUD_NAME}/resources/video/upload/{public_id}",
+            auth=(config.CLOUDINARY_API_KEY, config.CLOUDINARY_API_SECRET),
+            timeout=15.0,
+        )
+    except httpx.HTTPError:
+        return None
+    if respuesta.status_code != 200:
+        return None
+    return respuesta.json().get("secure_url")
+
+
+class ErrorVideo(Exception):
+    """Cloudinary no aceptó el pedido. Va al log; el panel muestra `fallo`."""

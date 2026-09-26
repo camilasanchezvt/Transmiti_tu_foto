@@ -272,6 +272,8 @@ Devuelve **sólo fotos aprobadas**. Dos comportamientos:
 | `PATCH /api/admin/fotos/{id}` | `{estado}` | `{id, estado}` |
 | `POST /api/admin/fotos/lote` | `{ids: [], estado}` | `{afectadas: 12}` |
 | `GET /api/admin/eventos/{id}/descarga` | query: `incluir=aprobadas\|todas` | archivo ZIP |
+| `POST /api/admin/eventos/{id}/video` | — | 202 `{estado, url, fotos, pedido_en}`. Pide a Cloudinary (`create_slideshow`) un video 1280×720 con las aprobadas, 3 s cada una, hasta 150 repartidas en la noche. Si ya hay uno en proceso, devuelve ese. Sin aprobadas → `DATOS_INVALIDOS` |
+| `GET /api/admin/eventos/{id}/video` | — | `{estado: ninguno\|procesando\|listo\|fallo, url, fotos, pedido_en}`. Mientras está `procesando` le pregunta a Cloudinary; a los 30 min sin terminar pasa a `fallo` |
 | `GET /api/salud` | — sin auth — | `{estado, base}` |
 
 **Reglas de negocio**

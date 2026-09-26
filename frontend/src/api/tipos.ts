@@ -120,6 +120,14 @@ export interface EventoAdmin {
   rechazadas: number;
 }
 
+/** GET y POST /api/admin/eventos/{id}/video */
+export interface VideoEvento {
+  estado: "ninguno" | "procesando" | "listo" | "fallo";
+  url: string | null;
+  fotos: number | null;
+  pedido_en: string | null;
+}
+
 export interface FotoAdmin {
   id: number;
   url: string;
