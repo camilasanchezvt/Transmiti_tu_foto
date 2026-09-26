@@ -1,0 +1,51 @@
+# Blueprint de Render: API (web service) + SPA (static site).
+# Los valores con `sync: false` se cargan a mano en el panel de Render al crear
+# el Blueprint; nunca van a este archivo (regla 2).
+
+services:
+  - type: web
+    name: transmitifoto-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    # El plan gratuito no tiene preDeployCommand: la migración corre al arrancar.
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/salud
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: ENTORNO
+        value: produccion
+      - key: JWT_HORAS
+        value: "12"
+      - key: JWT_SECRET
+        generateValue: true
+      # Cadena del POOLER EN MODO SESIÓN de Supabase (puerto 5432, host *.pooler.supabase.com).
+      - key: DATABASE_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      # La URL real del static site, sin barra final.
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: transmitifoto
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      # React Router: cualquier ruta sirve index.html.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # La URL real de la API, sin barra final.
+      - key: VITE_API_URL
+        sync: false
