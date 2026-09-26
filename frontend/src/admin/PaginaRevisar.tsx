@@ -8,6 +8,18 @@ import {
   type TouchEvent as EventoToque,
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  CheckBadgeIcon,
+  CheckCircleIcon as CheckCircleMini,
+  ChevronLeftIcon,
+  XMarkIcon as XMarkMini,
+} from "@heroicons/react/20/solid";
+import { ArrowUturnLeftIcon, PhotoIcon, TrashIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import {
+  CheckBadgeIcon as AprobarTodasGrande,
+  CheckCircleIcon,
+  CheckIcon,
+} from "@heroicons/react/24/solid";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
 import type { EstadoFoto, EventoAdmin, FotoAdmin } from "../api/tipos";
@@ -17,8 +29,10 @@ import Cargando from "../comp/Cargando";
 import ChipEstado from "../comp/ChipEstado";
 import Confirmar from "../comp/Confirmar";
 import Foto from "../comp/Foto";
+import type { Icono } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
-import { fechaCorta } from "../lib/fecha";
+import { sinArchivos } from "../lib/descargas";
+import { fechaCorta, fechaLarga } from "../lib/fecha";
 import { useVolverALista } from "./navegacion";
 import { comun } from "./textos/comun";
 import { textosRevisar as t } from "./textos/revisar";
@@ -97,11 +111,21 @@ function reinsertar(lista: FotoAdmin[], ubicadas: Ubicada[]): FotoAdmin[] {
   return copia;
 }
 
-/** Los botones grandes de la barra de abajo, más angostos en el celular: con
- *  el relleno y la letra de Boton, "Rechazar", "↶ Deshacer" y "Aprobar" no
- *  entran en una fila de 375 px. El `!` gana sobre las clases de Boton sin
- *  depender del orden en que Tailwind escribe el CSS. */
-const COMPACTO = "whitespace-nowrap !px-3 !text-base sm:!px-6 sm:!text-lg";
+/**
+ * Los botones grandes de la barra de abajo, más angostos en el celular. Con
+ * el ícono al lado, "Rechazar", "Deshacer" y "Aprobar" no entran en una fila
+ * de 375 px (medido: piden ~120 px cada uno y la columna da ~108): en el
+ * celular el ícono va ARRIBA del texto, como en las barras de herramientas de
+ * iOS, y cada botón mide lo que su palabra (~90 px). Así entran hasta en 320.
+ * Desde `sm` el ícono vuelve al lado y el botón, a su tamaño normal.
+ *
+ * `[&>svg]:ml-0` saca el -ml-1 que Boton le pone al ícono para pegarlo al
+ * texto: apilado, lo correría del centro. El `!` gana sobre las clases de
+ * Boton sin depender del orden en que Tailwind escribe el CSS.
+ */
+const COMPACTO =
+  "whitespace-nowrap !text-base max-sm:flex-col max-sm:!gap-0.5 max-sm:!px-2 max-sm:[&>svg]:ml-0 " +
+  "sm:!text-lg";
 
 /** Mismo vidrio oscuro que la barra del resto del panel (LayoutAdmin). */
 const BARRA = "border-borde bg-black/60 backdrop-blur-2xl backdrop-saturate-150";
@@ -229,6 +253,19 @@ export default function PaginaRevisar() {
         const eventos = await admin.eventos();
         const mio = eventos.find((e) => e.id === idEvento);
         if (!mio) throw new ErrorApi("EVENTO_NO_ENCONTRADO", t.noEncontrado, 404);
+        if (sinArchivos(mio)) {
+          // A los 30 días las imágenes se borran de Cloudinary. Las filas
+          // siguen en la base (nada se borra), pero pedirlas sólo dibujaría
+          // miniaturas rotas: no se piden. Desde el día del borrado, aunque
+          // la limpieza todavía no haya pasado: puede borrar mientras se mira.
+          if (!vivo) return;
+          setEvento(mio);
+          fijarFotos([]);
+          conocidas.current = new Set();
+          ultimoId.current = 0;
+          setCargando(false);
+          return;
+        }
         const lista = await admin.fotos(idEvento, { estado: "pendiente", limite: LIMITE });
         if (!vivo) return;
         setEvento(mio);
@@ -255,7 +292,8 @@ export default function PaginaRevisar() {
 
   // ── Auto-refresco que no mueve la posición ──────────────────
   useEffect(() => {
-    if (!evento) return;
+    // Con las fotos borradas no llega nada nuevo: el evento quedó cerrado.
+    if (!evento || sinArchivos(evento)) return;
     // Un pedido por vez. Con Render dormido o el wifi del salón, uno puede
     // tardar más de diez segundos: el siguiente saldría con el mismo `desde` y
     // las mismas fotos entrarían dos veces.
@@ -469,7 +507,9 @@ export default function PaginaRevisar() {
     [seleccion, seleccionando, moderar, moderarVarias, deshacer, salirDeSeleccion, fijarIndice],
   );
 
-  useAtajos(alActuar, !cargando && !error && !confirmarTodas);
+  const borradas = evento !== null && sinArchivos(evento);
+
+  useAtajos(alActuar, !cargando && !error && !confirmarTodas && !borradas);
 
   function alternar(idFoto: number) {
     setSeleccion((previa) => {
@@ -569,13 +609,11 @@ export default function PaginaRevisar() {
             to={lista.a}
             aria-label={t.volverA(lista.texto)}
             className={
-              "inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2 text-base text-acento " +
+              "inline-flex min-h-11 shrink-0 items-center gap-0.5 rounded-full pl-1 pr-2 text-base text-acento " +
               "hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
             }
           >
-            <span aria-hidden className="text-2xl leading-none">
-              ‹
-            </span>
+            <ChevronLeftIcon aria-hidden className="h-6 w-6 shrink-0" />
             {t.volver}
           </Link>
 
@@ -590,24 +628,36 @@ export default function PaginaRevisar() {
           </div>
 
           {/* Siempre visible, arriba y grande: es la única métrica que importa
-              en vivo. Cuenta también las nuevas que todavía no se sumaron. */}
-          <p className="shrink-0 pl-1 text-right leading-none">
-            <strong className="block text-3xl font-semibold tabular-nums sm:text-4xl">{pendientes}</strong>
-            <span className="text-xs text-tenue sm:text-sm">{t.pendientes(pendientes)}</span>
-          </p>
+              en vivo. Cuenta también las nuevas que todavía no se sumaron.
+              Con las fotos borradas no hay nada que contar: un "0" diría que
+              se revisó todo, y puede que no. */}
+          {!borradas && (
+            <p className="shrink-0 pl-1 text-right leading-none">
+              <strong className="block text-3xl font-semibold tabular-nums sm:text-4xl">{pendientes}</strong>
+              <span className="text-xs text-tenue sm:text-sm">{t.pendientes(pendientes)}</span>
+            </p>
+          )}
         </div>
       </header>
 
       {aviso && (
         <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-borde bg-rojo/15 px-4 py-1">
           <p className="min-w-0 text-sm text-rojo sm:text-base">{aviso}</p>
-          <BotonChico className="shrink-0" onClick={() => setAviso(null)}>
+          <BotonChico className="shrink-0" icono={XMarkMini} onClick={() => setAviso(null)}>
             {comun.cerrar}
           </BotonChico>
         </div>
       )}
 
-      {actual ? (
+      {borradas ? (
+        <Vacio
+          icono={TrashIcon}
+          titulo={evento.fotos_borradas_en ? t.borradas.titulo : t.borrando.titulo}
+          texto={evento.fotos_borradas_en ? t.borradas.texto(fechaLarga(evento.fotos_borradas_en)) : t.borrando.texto}
+        >
+          <Boton onClick={() => navegar(lista.a)}>{t.volverA(lista.texto)}</Boton>
+        </Vacio>
+      ) : actual ? (
         <>
           {/* Foto grande: se decide mirando la foto en grande, no la miniatura. */}
           <section
@@ -657,21 +707,28 @@ export default function PaginaRevisar() {
           </section>
 
           <div className="shrink-0 border-t border-borde">
+            {/* flex-wrap: con un número de tres cifras y la letra agrandada,
+                "Seleccionar" y "Aprobar todas (200)" pasan a dos renglones
+                antes que empujar la página hacia el costado. */}
             {(seleccionando || fotos.length > 1) && (
-              <div className="flex items-center justify-between gap-2 px-3 pt-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 px-3 pt-2">
                 {seleccionando ? (
                   <>
                     <p className="min-w-0 text-sm font-medium sm:text-base" aria-live="polite">
                       {marcadas > 0 ? t.seleccionadas(marcadas) : t.tocaParaMarcar}
                     </p>
-                    <BotonChico className="shrink-0" onClick={salirDeSeleccion}>
+                    <BotonChico className="shrink-0" icono={XMarkMini} onClick={salirDeSeleccion}>
                       {comun.cancelar}
                     </BotonChico>
                   </>
                 ) : (
                   <>
-                    <BotonChico onClick={() => setSeleccionando(true)}>{t.seleccionar}</BotonChico>
-                    <BotonChico onClick={() => setConfirmarTodas(true)}>{t.aprobarTodas(fotos.length)}</BotonChico>
+                    <BotonChico icono={CheckCircleMini} onClick={() => setSeleccionando(true)}>
+                      {t.seleccionar}
+                    </BotonChico>
+                    <BotonChico icono={CheckBadgeIcon} onClick={() => setConfirmarTodas(true)}>
+                      {t.aprobarTodas(fotos.length)}
+                    </BotonChico>
                   </>
                 )}
               </div>
@@ -736,30 +793,42 @@ export default function PaginaRevisar() {
                 <div className="grid grid-cols-2 gap-2">
                   <Boton
                     variante="peligro"
+                    icono={XMarkIcon}
                     className={COMPACTO}
                     disabled={marcadas === 0}
                     onClick={() => alActuar("rechazar")}
                   >
                     {marcadas > 0 ? t.rechazarN(marcadas) : t.rechazar}
                   </Boton>
-                  <Boton className={COMPACTO} disabled={marcadas === 0} onClick={() => alActuar("aprobar")}>
+                  <Boton
+                    icono={CheckIcon}
+                    className={COMPACTO}
+                    disabled={marcadas === 0}
+                    onClick={() => alActuar("aprobar")}
+                  >
                     {marcadas > 0 ? t.aprobarN(marcadas) : t.aprobar}
                   </Boton>
                 </div>
               ) : (
                 <div className="grid grid-cols-[1fr_auto_1fr] gap-2">
-                  <Boton variante="peligro" className={COMPACTO} onClick={() => alActuar("rechazar")}>
+                  <Boton
+                    variante="peligro"
+                    icono={XMarkIcon}
+                    className={COMPACTO}
+                    onClick={() => alActuar("rechazar")}
+                  >
                     {t.rechazar}
                   </Boton>
                   <Boton
                     variante="secundario"
+                    icono={ArrowUturnLeftIcon}
                     className={COMPACTO}
                     disabled={decisiones === 0}
                     onClick={() => alActuar("deshacer")}
                   >
                     {t.deshacer}
                   </Boton>
-                  <Boton className={COMPACTO} onClick={() => alActuar("aprobar")}>
+                  <Boton icono={CheckIcon} className={COMPACTO} onClick={() => alActuar("aprobar")}>
                     {t.aprobar}
                   </Boton>
                 </div>
@@ -769,19 +838,15 @@ export default function PaginaRevisar() {
           </div>
         </>
       ) : (
-        <section className="flex min-h-[45vh] flex-1 flex-col items-center justify-center gap-2 px-6 py-10 text-center">
-          <h2 className="text-2xl font-semibold">{t.vacio.titulo}</h2>
-          <p className="text-tenue">{t.vacio.texto}</p>
-          <div className="mt-6 flex w-full max-w-xs flex-col gap-3">
-            <Boton onClick={() => navegar(lista.a)}>{t.volverA(lista.texto)}</Boton>
-            {/* Si la última se aprobó sin querer, en el celular no hay Z. */}
-            {decisiones > 0 && (
-              <Boton variante="secundario" onClick={deshacer}>
-                {t.deshacer}
-              </Boton>
-            )}
-          </div>
-        </section>
+        <Vacio icono={PhotoIcon} titulo={t.vacio.titulo} texto={t.vacio.texto}>
+          <Boton onClick={() => navegar(lista.a)}>{t.volverA(lista.texto)}</Boton>
+          {/* Si la última se aprobó sin querer, en el celular no hay Z. */}
+          {decisiones > 0 && (
+            <Boton variante="secundario" icono={ArrowUturnLeftIcon} onClick={deshacer}>
+              {t.deshacer}
+            </Boton>
+          )}
+        </Vacio>
       )}
 
       <Confirmar
@@ -794,6 +859,7 @@ export default function PaginaRevisar() {
           </>
         }
         textoConfirmar={t.confirmarTodas.confirmar(fotos.length)}
+        iconoConfirmar={AprobarTodasGrande}
         onConfirmar={aprobarTodas}
         onCancelar={() => setConfirmarTodas(false)}
       />
@@ -801,32 +867,54 @@ export default function PaginaRevisar() {
   );
 }
 
-/** El círculo de selección de iOS: vacío si no está marcada, azul con tilde si
- *  sí. Sobre una foto tiene que leerse igual en una clara que en una oscura. */
+/**
+ * El círculo de selección de iOS: vacío si no está marcada, azul con tilde
+ * blanca si sí. Sobre una foto tiene que leerse igual en una clara que en una
+ * oscura.
+ *
+ * La marcada es CheckCircleIcon (24/solid) en azul sobre un círculo blanco
+ * del tamaño de la caja: la tilde del ícono es un hueco, y por ahí se ve el
+ * blanco de atrás; el ícono dibuja su círculo un poco más chico que la caja, y
+ * lo que sobra queda como el borde blanco de iOS.
+ */
 function Tilde({ marcada, grande = false }: { marcada: boolean; grande?: boolean }) {
+  const tamano = grande ? "h-7 w-7" : "h-5 w-5";
+  if (marcada) {
+    return (
+      <span aria-hidden className={`block rounded-full bg-white shadow shadow-black/40 ${tamano}`}>
+        <CheckCircleIcon aria-hidden className="h-full w-full text-acento" />
+      </span>
+    );
+  }
   return (
     <span
       aria-hidden
-      className={
-        "flex items-center justify-center rounded-full border-2 shadow shadow-black/40 " +
-        (grande ? "h-7 w-7 " : "h-5 w-5 ") +
-        (marcada ? "border-white bg-acento text-white" : "border-white/90 bg-black/30")
-      }
-    >
-      {marcada && (
-        <svg
-          viewBox="0 0 16 16"
-          className="h-3/5 w-3/5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M3.5 8.5l3 3 6-7" />
-        </svg>
-      )}
-    </span>
+      className={`block rounded-full border-2 border-white/90 bg-black/30 shadow shadow-black/40 ${tamano}`}
+    />
+  );
+}
+
+/** Lo que va en lugar de la bandeja cuando no hay nada que revisar: no quedan
+ *  pendientes, o las fotos ya se borraron. El ícono grande y tenue, como los
+ *  estados vacíos de iOS; abajo, adónde ir. */
+function Vacio({
+  icono: IconoVacio,
+  titulo,
+  texto,
+  children,
+}: {
+  icono: Icono;
+  titulo: string;
+  texto: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex min-h-[45vh] flex-1 flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+      <IconoVacio aria-hidden className="mb-2 h-12 w-12 shrink-0 text-tenue" />
+      <h2 className="text-balance text-2xl font-semibold">{titulo}</h2>
+      <p className="text-balance text-tenue">{texto}</p>
+      <div className="mt-6 flex w-full max-w-xs flex-col gap-3">{children}</div>
+    </section>
   );
 }
 

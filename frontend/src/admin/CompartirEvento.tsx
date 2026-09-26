@@ -1,8 +1,18 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { ComputerDesktopIcon, LinkIcon, QrCodeIcon, TvIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowDownTrayIcon,
+  ArrowTopRightOnSquareIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  ClipboardDocumentIcon,
+  ExclamationTriangleIcon,
+} from "@heroicons/react/20/solid";
 
 import { ErrorApi, admin } from "../api/client";
 import type { EventoAdmin } from "../api/tipos";
 import BotonChico from "../comp/BotonChico";
+import type { Icono } from "../comp/icono";
 import { dibujarQR } from "../lib/qr";
 import { textosCompartir as t } from "./textos/compartir";
 import { useCopiar } from "./useCopiar";
@@ -38,9 +48,10 @@ export default function CompartirEvento({
   );
 }
 
-/** Una fila que se abre y se cierra, como las de Ajustes de iOS. El contenido
- *  sólo se monta abierto: cada QR se dibuja a 1024 px para imprimir, y con
- *  veinte eventos plegados serían veinte lienzos grandes de más. */
+/** Una fila que se abre y se cierra, como las de Ajustes de iOS: el ícono del
+ *  QR adelante, el título y la flecha que gira al abrir. El contenido sólo se
+ *  monta abierto: cada QR se dibuja a 1024 px para imprimir, y con veinte
+ *  eventos plegados serían veinte lienzos grandes de más. */
 function Desplegable({
   titulo,
   abiertoAlInicio = false,
@@ -65,19 +76,14 @@ function Desplegable({
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
         }
       >
-        {titulo}
-        <svg
+        <span className="flex min-w-0 items-center gap-3">
+          <QrCodeIcon aria-hidden className="h-6 w-6 shrink-0 text-acento" />
+          {titulo}
+        </span>
+        <ChevronRightIcon
           aria-hidden
-          viewBox="0 0 24 24"
           className={`h-5 w-5 shrink-0 text-tenue transition-transform ${abierto ? "rotate-90" : ""}`}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M9 6l6 6-6 6" />
-        </svg>
+        />
       </button>
       <div id={id} hidden={!abierto} className="pt-3">
         {abierto && children}
@@ -129,7 +135,9 @@ function QrDescargable({ url, nombre, grande }: { url: string; nombre: string; g
         aria-label={t.qr(nombre)}
         className={`rounded-2xl bg-white ${grande ? "h-[min(240px,65vw)] w-[min(240px,65vw)]" : "h-40 w-40"}`}
       />
-      <BotonChico onClick={descargar}>{t.descargarQR}</BotonChico>
+      <BotonChico onClick={descargar} icono={ArrowDownTrayIcon}>
+        {t.descargarQR}
+      </BotonChico>
     </div>
   );
 }
@@ -143,11 +151,18 @@ function Copiable({ etiqueta, ayuda, valor }: { etiqueta: string; ayuda: string;
       <p className="text-sm leading-snug text-tenue">{ayuda}</p>
       <div className="mt-2 flex items-center gap-2">
         {/* Sin "https://": ocupa lugar y no le dice nada a nadie. Lo que se
-            copia es el link completo. */}
-        <code className="min-w-0 flex-1 truncate rounded-xl bg-hundido px-3 py-3 font-mono text-sm">
+            copia es el link completo. Entero y en dos renglones si hace falta,
+            no cortado con "…": en 375 px, al lado de "Copiar" no entra en uno,
+            y quien lo dicta por teléfono necesita verlo todo. */}
+        <code className="min-w-0 flex-1 break-all rounded-xl bg-hundido px-3 py-3 font-mono text-sm leading-snug">
           {valor.replace(/^https?:\/\//, "")}
         </code>
-        <BotonChico onClick={() => copiar(valor, t.copiarAMano)} className="shrink-0" aria-live="polite">
+        <BotonChico
+          onClick={() => copiar(valor, t.copiarAMano)}
+          icono={copiado ? CheckIcon : ClipboardDocumentIcon}
+          className="shrink-0"
+          aria-live="polite"
+        >
           {copiado ? t.copiado : t.copiar}
         </BotonChico>
       </div>
@@ -156,10 +171,11 @@ function Copiable({ etiqueta, ayuda, valor }: { etiqueta: string; ayuda: string;
 }
 
 /**
- * Las tres formas de llevar las fotos a la pared, cada una explicada en una
- * línea: quien organiza no tiene por qué saber qué es un "token de pantalla".
- * Sin publicar, abrir y vincular no andan (el backend no sirve la pantalla de
- * un borrador); copiar el link sí, para dejarlo listo de antemano.
+ * Las tres formas de llevar las fotos a la pared, cada una con su ícono y
+ * explicada en una línea: quien organiza no tiene por qué saber qué es un
+ * "token de pantalla". Sin publicar, abrir y vincular no andan (el backend no
+ * sirve la pantalla de un borrador); copiar el link sí, para dejarlo listo de
+ * antemano. Las que no andan llevan el ícono apagado, además del botón.
  */
 function ConectarPantalla({ evento }: { evento: EventoAdmin }) {
   const idTitulo = useId();
@@ -178,26 +194,38 @@ function ConectarPantalla({ evento }: { evento: EventoAdmin }) {
       <h3 id={idTitulo} className="text-base font-semibold">
         {t.pantalla.titulo}
       </h3>
-      <p className={`text-sm leading-snug ${sinPublicar ? "text-naranja" : "text-tenue"}`}>
-        {sinPublicar ? t.pantalla.sinPublicar : t.pantalla.ayuda}
-      </p>
+      {sinPublicar ? (
+        <p className="mt-0.5 flex items-start gap-2 text-sm leading-5 text-naranja">
+          <ExclamationTriangleIcon aria-hidden className="h-5 w-5 shrink-0" />
+          {t.pantalla.sinPublicar}
+        </p>
+      ) : (
+        <p className="text-sm leading-snug text-tenue">{t.pantalla.ayuda}</p>
+      )}
 
       <ul className="mt-3 divide-y divide-borde rounded-2xl border border-borde">
         <Opcion
+          icono={ComputerDesktopIcon}
+          apagada={sinPublicar}
           titulo={t.pantalla.estaCompu.titulo}
           ayuda={t.pantalla.estaCompu.ayuda}
           accion={
-            <BotonChico onClick={abrir} disabled={sinPublicar}>
+            <BotonChico onClick={abrir} disabled={sinPublicar} icono={ArrowTopRightOnSquareIcon}>
               {t.pantalla.estaCompu.boton}
             </BotonChico>
           }
         />
         <OpcionTele evento={evento} sinPublicar={sinPublicar} />
         <Opcion
+          icono={LinkIcon}
           titulo={t.pantalla.otraCompu.titulo}
           ayuda={t.pantalla.otraCompu.ayuda}
           accion={
-            <BotonChico onClick={() => copiar(urlPantalla, t.copiarAMano)} aria-live="polite">
+            <BotonChico
+              onClick={() => copiar(urlPantalla, t.copiarAMano)}
+              icono={copiado ? CheckIcon : ClipboardDocumentIcon}
+              aria-live="polite"
+            >
               {copiado ? t.copiado : t.pantalla.otraCompu.boton}
             </BotonChico>
           }
@@ -207,14 +235,22 @@ function ConectarPantalla({ evento }: { evento: EventoAdmin }) {
   );
 }
 
-/** Una fila de "Conectar la pantalla". En el celular el botón va debajo y a
- *  todo el ancho (más fácil de acertar); desde sm, a la derecha. */
+/** Una fila de "Conectar la pantalla", como las de Ajustes de iOS: el ícono en
+ *  su cuadradito, el nombre y una línea de ayuda. En el celular el botón va
+ *  debajo y a todo el ancho (más fácil de acertar); desde sm, a la derecha. Lo
+ *  de abajo (el código de la tele) también va a todo el ancho: seis dígitos
+ *  grandes no entran corridos detrás del ícono en 375 px. */
 function Opcion({
+  icono: IconoOpcion,
+  apagada = false,
   titulo,
   ayuda,
   accion,
   children,
 }: {
+  icono: Icono;
+  /** Sin publicar no anda: el ícono gris en vez de azul. */
+  apagada?: boolean;
   titulo: string;
   ayuda: string;
   accion: ReactNode;
@@ -223,9 +259,19 @@ function Opcion({
   return (
     <li className="p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="font-medium">{titulo}</p>
-          <p className="text-sm leading-snug text-tenue">{ayuda}</p>
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className={
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl " +
+              (apagada ? "bg-hundido text-tenue" : "bg-acento/15 text-acento")
+            }
+          >
+            <IconoOpcion aria-hidden className="h-6 w-6" />
+          </span>
+          <div className="min-w-0">
+            <p className="font-medium">{titulo}</p>
+            <p className="text-sm leading-snug text-tenue">{ayuda}</p>
+          </div>
         </div>
         {accion && <div className="flex shrink-0 flex-col sm:block">{accion}</div>}
       </div>
@@ -288,6 +334,8 @@ function OpcionTele({ evento, sinPublicar }: { evento: EventoAdmin; sinPublicar:
 
   return (
     <Opcion
+      icono={TvIcon}
+      apagada={sinPublicar}
       titulo={t.pantalla.tele.titulo}
       ayuda={t.pantalla.tele.ayuda}
       accion={

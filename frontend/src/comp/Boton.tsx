@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
+import { claseIconoBoton, type Icono } from "./icono";
 import { textosBase } from "./textos";
 
 export type Variante = "principal" | "secundario" | "peligro";
@@ -7,6 +8,12 @@ export type Variante = "principal" | "secundario" | "peligro";
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variante?: Variante;
   cargando?: boolean;
+  /**
+   * Un ícono de heroicons a la izquierda del texto, pasado como componente:
+   * icono={PaperAirplaneIcon}. 24/solid en el principal, 24/outline en el
+   * resto. Es decorativo (aria-hidden): el texto sigue siendo obligatorio.
+   */
+  icono?: Icono;
   children: ReactNode;
 }
 
@@ -29,10 +36,17 @@ const ESTILOS: Record<Variante, string> = {
  * con un sm:w-auto encima vuelve al ancho de su texto (un flex con w-auto
  * seguiría ocupando la fila entera). Centra el texto en un link, que no lo
  * centra solo como un <button>.
+ *
+ * Un link con ícono lo lleva adentro, con las mismas clases que usa el botón:
+ *
+ *   <a href={url} download className={claseBoton("secundario")}>
+ *     <ArrowDownTrayIcon aria-hidden className={claseIconoBoton} />
+ *     {textos.descargar}
+ *   </a>
  */
 export function claseBoton(variante: Variante = "principal"): string {
   return (
-    "inline-flex min-h-boton w-full items-center justify-center rounded-full px-6 text-center text-lg font-semibold " +
+    "inline-flex min-h-boton w-full items-center justify-center gap-2 rounded-full px-6 text-center text-lg font-semibold " +
     "transition disabled:cursor-not-allowed disabled:opacity-50 " +
     `focus:outline-none focus-visible:ring-2 focus-visible:ring-acento ${ESTILOS[variante]}`
   );
@@ -46,6 +60,7 @@ export function claseBoton(variante: Variante = "principal"): string {
 export default function Boton({
   variante = "principal",
   cargando = false,
+  icono: IconoBoton,
   disabled,
   className = "",
   children,
@@ -53,6 +68,8 @@ export default function Boton({
 }: Props) {
   return (
     <button {...resto} disabled={disabled || cargando} className={`${claseBoton(variante)} ${className}`}>
+      {/* Mientras carga no va el ícono: "Esperá…" no es la acción. */}
+      {IconoBoton && !cargando && <IconoBoton aria-hidden className={claseIconoBoton} />}
       {cargando ? textosBase.esperar : children}
     </button>
   );

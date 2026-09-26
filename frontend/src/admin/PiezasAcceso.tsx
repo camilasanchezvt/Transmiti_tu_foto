@@ -1,7 +1,9 @@
 import { useId, useState, type InputHTMLAttributes, type ReactNode, type Ref } from "react";
 import { Link } from "react-router-dom";
+import { CheckIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon } from "@heroicons/react/20/solid";
 
 import { ErrorApi } from "../api/client";
+import { claseIconoChip } from "../comp/icono";
 import { acceso } from "./textos/acceso";
 import { comun } from "./textos/comun";
 
@@ -36,9 +38,9 @@ interface PropsCampo extends Omit<InputHTMLAttributes<HTMLInputElement>, "classN
  * escribir y deja a quien vuelve al campo sin saber qué era). 48 px de alto y
  * texto de 16 px: con menos, Safari del iPhone hace zoom al tocarlo.
  *
- * Los de contraseña traen "Mostrar": en el celular se escribe sin ver las
- * teclas y una contraseña de diez caracteres con un error adentro no se
- * encuentra de otra forma.
+ * Los de contraseña traen "Mostrar", con el ojo: en el celular se escribe sin
+ * ver las teclas y una contraseña de diez caracteres con un error adentro no
+ * se encuentra de otra forma.
  */
 export function Campo({
   etiqueta,
@@ -54,6 +56,8 @@ export function Campo({
   const esPassword = type === "password";
   const [visible, setVisible] = useState(false);
   const nota = error || ayuda;
+  const cumplida = !error && ayudaCumplida;
+  const IconoOjo = visible ? EyeSlashIcon : EyeIcon;
 
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
@@ -72,7 +76,9 @@ export function Campo({
             "h-12 w-full min-w-0 rounded-xl border bg-hundido px-3 text-base text-white outline-none " +
             "transition-colors focus:border-acento " +
             (error ? "border-rojo " : "border-borde ") +
-            (esPassword ? "pr-24" : "")
+            // El mismo ancho que el botón de adentro: lo escrito no pasa por
+            // debajo del ojo.
+            (esPassword ? "pr-28" : "")
           }
         />
         {esPassword && (
@@ -82,15 +88,21 @@ export function Campo({
             // En la compu, que el clic no le saque el foco al campo: se sigue
             // escribiendo sin volver a hacer clic adentro.
             onMouseDown={(e) => e.preventDefault()}
-            aria-pressed={visible}
-            aria-label={acceso.mostrarPasswordEtiqueta(etiqueta)}
+            // Sin aria-label ni aria-pressed: el nombre sale del contenido y
+            // empieza con la palabra que se ve ("Mostrar lo que escribiste en
+            // Contraseña"). Con control por voz, "tocar Mostrar" lo encuentra.
+            // Ancho fijo (w-28): "Mostrar" y "Ocultar" no miden lo mismo, y
+            // sin esto el botón saltaría de lugar con cada toque.
             className={
-              "absolute inset-y-0 right-0 flex min-h-11 min-w-[4.5rem] items-center justify-center rounded-r-xl px-3 " +
+              "absolute inset-y-0 right-0 flex min-h-11 w-28 items-center justify-center gap-1.5 rounded-r-xl px-3 " +
               "text-sm font-medium text-acento transition hover:brightness-125 " +
               "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-acento"
             }
           >
+            <IconoOjo aria-hidden className="h-5 w-5 shrink-0" />
             {visible ? acceso.ocultarPassword : acceso.mostrarPassword}
+            {/* sr-only es absolute: no ocupa lugar en el flex ni suma gap. */}
+            <span className="sr-only">{acceso.sufijoPasswordOculto(etiqueta)}</span>
           </button>
         )}
       </div>
@@ -98,11 +110,20 @@ export function Campo({
         <p
           id={idNota}
           className={
-            "text-sm leading-snug " +
-            (error ? "text-rojo" : ayudaCumplida ? "text-verde" : "text-tenue")
+            "flex items-start gap-1 text-sm leading-snug " +
+            (error ? "text-rojo" : cumplida ? "text-verde" : "text-tenue")
           }
         >
-          {nota}
+          {/* El tilde no es sólo color: con el brillo bajo o con daltonismo,
+              el verde solo no se distingue del gris. Para quien no lo ve, lo
+              dice el texto oculto. */}
+          {cumplida && (
+            <>
+              <CheckIcon aria-hidden className={`mt-0.5 ${claseIconoChip}`} />
+              <span className="sr-only">{acceso.cumplido}</span>
+            </>
+          )}
+          <span className="min-w-0">{nota}</span>
         </p>
       )}
     </div>
@@ -111,9 +132,10 @@ export function Campo({
 
 type TonoAviso = "error" | "aviso";
 
-/** Un recuadro de color dentro de la tarjeta, arriba del botón. `aviso` es
- *  para lo que no es un error de tipeo: una cuenta que espera que la
- *  habiliten no se arregla escribiendo otra cosa. */
+/** Un recuadro de color dentro de la tarjeta, arriba del botón, con el
+ *  triángulo de advertencia. `aviso` es para lo que no es un error de tipeo:
+ *  una cuenta que espera que la habiliten no se arregla escribiendo otra
+ *  cosa. */
 export function Aviso({
   tono = "error",
   refAviso,
@@ -128,11 +150,14 @@ export function Aviso({
       ref={refAviso}
       role="alert"
       className={
-        "rounded-2xl px-4 py-3 text-base leading-snug " +
+        "flex items-start gap-2 rounded-2xl px-4 py-3 text-base leading-snug " +
         (tono === "aviso" ? "bg-naranja/15 text-naranja" : "bg-rojo/15 text-rojo")
       }
     >
-      {children}
+      {/* 20 px contra un renglón de 22: baja 1 px para quedar centrado en el
+          primero aunque el mensaje ocupe dos. */}
+      <ExclamationTriangleIcon aria-hidden className="mt-px h-5 w-5 shrink-0" />
+      <span className="min-w-0 break-words">{children}</span>
     </p>
   );
 }

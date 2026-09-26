@@ -25,12 +25,19 @@ export const acceso = {
     repetirPassword: "Repetí la contraseña",
   },
 
-  /** El botón que muestra lo que se escribió en un campo de contraseña. El
-   *  texto visible cambia; lo que lee un lector de pantalla no, porque el
-   *  estado lo da aria-pressed. Nombra el campo: en Crear cuenta hay dos. */
+  /** El botón que muestra lo que se escribió en un campo de contraseña. Se
+   *  ve "Mostrar" u "Ocultar": es la acción, no el estado. El sufijo va oculto
+   *  a la vista, justo después, y nombra el campo (en Crear cuenta hay dos).
+   *  El nombre que lee el lector de pantalla empieza con la palabra visible,
+   *  así quien maneja el celular por voz dice "tocar Mostrar" y lo encuentra.
+   *  El espacio del principio es a propósito: separa las dos partes. */
   mostrarPassword: "Mostrar",
   ocultarPassword: "Ocultar",
-  mostrarPasswordEtiqueta: (campo: string) => `Ver lo que escribiste en ${campo}`,
+  sufijoPasswordOculto: (campo: string) => ` lo que escribiste en ${campo}`,
+
+  /** Oculto, antes de una ayuda que ya se cumple: lo que el tilde verde dice
+   *  a la vista ("Listo: Coinciden"). */
+  cumplido: "Listo:",
 
   entrar: {
     tituloPestana: "Entrar",
@@ -55,9 +62,10 @@ export const acceso = {
         const faltan = MINIMO_PASSWORD - largo;
         return `Mínimo ${MINIMO_PASSWORD} caracteres · te ${faltan === 1 ? "falta 1" : `faltan ${faltan}`}`;
       }
-      return `✓ Mínimo ${MINIMO_PASSWORD} caracteres`;
+      // Cumplida: el mismo texto, en verde y con el tilde que pone el campo.
+      return `Mínimo ${MINIMO_PASSWORD} caracteres`;
     },
-    coinciden: "✓ Coinciden",
+    coinciden: "Coinciden",
 
     errores: {
       nombreVacio: "Escribí tu nombre",

@@ -171,6 +171,31 @@ def _nombre_seguro(indice: int, nombre_invitado: str | None, public_id: str) -> 
     return f"{indice:03d} - {limpio}.{extension}" if limpio else f"{indice:03d}.{extension}"
 
 
+# Va adentro del ZIP cuando faltan fotos. "000" adelante para que quede primero
+# al abrir la carpeta, antes que "001 - …jpg": es lo primero que hay que leer.
+NOMBRE_FALTANTES = "000 - FALTAN FOTOS.txt"
+
+
+def texto_faltantes(faltan: list[str], incompletas: list[str], total: int) -> str:
+    """Lo que dice el archivo de faltantes. Lo lee quien organiza, en el
+    celular o en la compu: sin palabras del sistema."""
+    cuantas = len(faltan) + len(incompletas)
+    if total == 1:
+        titulo = "No se pudo bajar la foto."
+    elif cuantas == total:
+        titulo = f"No se pudo bajar ninguna de las {total} fotos."
+    elif cuantas == 1:
+        titulo = f"No se pudo bajar 1 de las {total} fotos."
+    else:
+        titulo = f"No se pudieron bajar {cuantas} de las {total} fotos."
+    lineas = [titulo, "Probá descargar de nuevo en un rato."]
+    if faltan:
+        lineas += ["", "No están en este archivo:", *faltan]
+    if incompletas:
+        lineas += ["", "Están, pero quedaron cortadas:", *incompletas]
+    return "\n".join(lineas) + "\n"
+
+
 def armar_zip(fotos: list[tuple[str | None, str]]):
     """Genera el ZIP de a pedazos. Recibe [(nombre_invitado, url), ...].
 
@@ -178,30 +203,45 @@ def armar_zip(fotos: list[tuple[str | None, str]]):
     pasarlos por deflate gasta CPU para no bajar ni un uno por ciento.
 
     Una foto que no se puede descargar se saltea. Con doscientas fotos, que una
-    URL falle no puede tirar abajo la descarga entera.
+    URL falle no puede tirar abajo la descarga entera. Pero no en silencio: la
+    respuesta ya salió con 200 (es streaming), así que lo único que puede avisar
+    que el ZIP está incompleto es el ZIP mismo. Si faltó alguna, al final va
+    NOMBRE_FALTANTES con cuántas y cuáles; sin eso, un ZIP con 150 de 200 fotos
+    (o con ninguna) se ve igual que uno completo, y quien lo baja cree que tiene
+    todo justo antes de que se borren de Cloudinary.
     """
     import httpx  # local: sólo hace falta para esto
 
+    faltan: list[str] = []
+    incompletas: list[str] = []
     chorro = _Chorro()
     with zipfile.ZipFile(chorro, "w", zipfile.ZIP_STORED) as z:
         with httpx.Client(timeout=30.0, follow_redirects=True) as cliente:
             for indice, (nombre_invitado, url) in enumerate(fotos, start=1):
+                interno = _nombre_seguro(indice, nombre_invitado, url)
+                empezada = False
                 try:
                     with cliente.stream("GET", url) as respuesta:
                         if respuesta.status_code != 200:
+                            faltan.append(interno)
                             continue
-                        interno = _nombre_seguro(indice, nombre_invitado, url)
                         with z.open(interno, "w") as destino:
+                            empezada = True
                             for pedazo in respuesta.iter_bytes(64 * 1024):
                                 destino.write(pedazo)
                                 salida = chorro.tomar()
                                 if salida:
                                     yield salida
                 except httpx.HTTPError:
+                    # Si la red se cortó a mitad de una foto, la entrada ya está
+                    # en el ZIP con lo que llegó: está, pero cortada.
+                    (incompletas if empezada else faltan).append(interno)
                     continue
                 salida = chorro.tomar()
                 if salida:
                     yield salida
+        if faltan or incompletas:
+            z.writestr(NOMBRE_FALTANTES, texto_faltantes(faltan, incompletas, len(fotos)))
     resto = chorro.tomar()
     if resto:
         yield resto
@@ -320,3 +360,89 @@ def consultar_video(public_id: str) -> str | None:
 
 class ErrorVideo(Exception):
     """Cloudinary no aceptó el pedido. Va al log; el panel muestra `fallo`."""
+
+
+# ─────────────────────────────────────────────────────────────
+# Borrado de los archivos de un evento (lo usa app/limpieza.py)
+# ─────────────────────────────────────────────────────────────
+
+# Las fotos son `image` y los videos del evento, `video`. Los dos viven en la
+# carpeta del evento, así que el mismo prefijo alcanza a todo lo que subió.
+TIPOS_A_BORRAR = ("image", "video")
+
+# Cloudinary borra por prefijo hasta mil archivos por pedido y avisa con
+# `next_cursor` o `partial` que quedan más. Cien vueltas son cien mil archivos:
+# si no alcanzan, algo raro pasa y es preferible cortar y reintentar en la
+# próxima pasada que quedarse dando vueltas para siempre.
+MAXIMO_VUELTAS_BORRADO = 100
+
+_CODIGO_SEGURO = re.compile(r"[A-Za-z0-9_-]+")
+
+
+class ErrorBorrado(Exception):
+    """Cloudinary no contestó o contestó con error. El evento no se marca y la
+    próxima pasada de limpieza lo vuelve a intentar."""
+
+
+def prefijo_del_evento(codigo_publico: str) -> str:
+    """`eventos/{codigo_publico}/`, CON la barra final.
+
+    Sin la barra, el prefijo del evento `ab12` es `eventos/ab12`, y Cloudinary
+    borraría también todo lo de `eventos/ab123...`, que es otro evento. Por lo
+    mismo se rechaza un código vacío o con caracteres raros: nunca se pide un
+    borrado más ancho que la carpeta de un evento.
+    """
+    if not _CODIGO_SEGURO.fullmatch(codigo_publico or ""):
+        raise ErrorBorrado("código público inválido: no se pide ningún borrado")
+    return carpeta_del_evento(codigo_publico) + "/"
+
+
+def borrar_por_prefijo(prefijo: str, tipo: str) -> int:
+    """Borra de Cloudinary todo lo de `tipo` cuyo public_id empieza con `prefijo`.
+
+    Es la Admin API (DELETE /resources/{tipo}/upload), con el secreto, así que
+    sólo corre acá. `invalidate=true` le pide además a la CDN que deje de servir
+    las copias que tenga guardadas. Devuelve cuántos archivos borró.
+
+    Borrar lo que ya no está no es un error: Cloudinary responde 200 sin nada
+    borrado. Por eso reintentar un evento a medio borrar es seguro.
+    """
+    import httpx
+
+    url = f"{API_CLOUDINARY}/{config.CLOUDINARY_CLOUD_NAME}/resources/{tipo}/upload"
+    borrados = 0
+    cursor: str | None = None
+    for _ in range(MAXIMO_VUELTAS_BORRADO):
+        parametros = {"prefix": prefijo, "invalidate": "true"}
+        if cursor:
+            parametros["next_cursor"] = cursor
+        try:
+            respuesta = httpx.delete(
+                url,
+                params=parametros,
+                auth=(config.CLOUDINARY_API_KEY, config.CLOUDINARY_API_SECRET),
+                timeout=30.0,
+            )
+        except httpx.HTTPError as e:
+            raise ErrorBorrado(f"sin respuesta de Cloudinary ({type(e).__name__})") from e
+        if respuesta.status_code >= 400:
+            raise ErrorBorrado(
+                f"Cloudinary respondió {respuesta.status_code}: {respuesta.text[:300]}"
+            )
+        try:
+            cuerpo = respuesta.json()
+        except ValueError as e:
+            raise ErrorBorrado("Cloudinary respondió algo que no es JSON") from e
+
+        borrados += sum(1 for v in (cuerpo.get("deleted") or {}).values() if v == "deleted")
+        cursor = cuerpo.get("next_cursor") or None
+        if not cursor and not cuerpo.get("partial"):
+            return borrados
+    raise ErrorBorrado(f"quedaron archivos sin borrar después de {MAXIMO_VUELTAS_BORRADO} pedidos")
+
+
+def borrar_archivos_del_evento(codigo_publico: str) -> int:
+    """Todas las fotos (aprobadas, pendientes y rechazadas) y todos los videos
+    del evento. Si falla cualquiera de los pedidos, levanta ErrorBorrado."""
+    prefijo = prefijo_del_evento(codigo_publico)
+    return sum(borrar_por_prefijo(prefijo, tipo) for tipo in TIPOS_A_BORRAR)

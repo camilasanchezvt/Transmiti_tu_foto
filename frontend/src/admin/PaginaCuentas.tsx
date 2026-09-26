@@ -1,5 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
+import {
+  ArrowPathIcon,
+  CheckBadgeIcon,
+  CheckCircleIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  ClipboardDocumentIcon,
+  ClockIcon,
+  ExclamationTriangleIcon,
+  LockClosedIcon,
+  NoSymbolIcon,
+  ShieldCheckIcon,
+  ShieldExclamationIcon,
+} from "@heroicons/react/20/solid";
+import { NoSymbolIcon as QuitarAccesoGrande } from "@heroicons/react/24/outline";
+import {
+  ShieldCheckIcon as DarAdminGrande,
+  ShieldExclamationIcon as QuitarAdminGrande,
+} from "@heroicons/react/24/solid";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
 import type { CambioCuenta, Cuenta } from "../api/tipos";
@@ -7,6 +26,7 @@ import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import { ChipRol } from "../comp/ChipEstado";
 import Confirmar from "../comp/Confirmar";
+import { claseIconoChico, claseIconoChip, type Icono } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
 import { fechaLarga } from "../lib/fecha";
 import LayoutAdmin from "./LayoutAdmin";
@@ -220,12 +240,13 @@ export default function PaginaCuentas() {
               </span>
             )}
           </Encabezado>
-          <p className="mt-1 text-sm leading-snug text-tenue">
-            {grupos.pendientes.length === 0 && (
-              <span className="text-white">{t.pendientes.vacio} </span>
-            )}
-            {t.pendientes.explicacion}
-          </p>
+          {grupos.pendientes.length === 0 && (
+            <p className="mt-2 flex items-center gap-2 text-base text-white">
+              <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0 text-verde" />
+              {t.pendientes.vacio}
+            </p>
+          )}
+          <p className="mt-1 text-sm leading-snug text-tenue">{t.pendientes.explicacion}</p>
           {grupos.pendientes.length > 0 && (
             <ul className="mt-4 flex flex-col gap-3">{grupos.pendientes.map(tarjeta)}</ul>
           )}
@@ -253,12 +274,10 @@ export default function PaginaCuentas() {
                 "[&::-webkit-details-marker]:hidden"
               }
             >
-              <span
+              <ChevronRightIcon
                 aria-hidden
-                className="inline-block w-4 text-center text-2xl leading-none text-tenue transition-transform group-open:rotate-90"
-              >
-                ›
-              </span>
+                className="h-5 w-5 shrink-0 text-tenue transition-transform group-open:rotate-90"
+              />
               {t.bajas.titulo}
               <span className="text-base font-normal tabular-nums text-tenue">
                 {grupos.bajas.length}
@@ -290,6 +309,7 @@ export default function PaginaCuentas() {
           mensaje={confirmacion.mensaje}
           textoConfirmar={confirmacion.confirmar}
           peligro={preguntando.accion === "rechazar" || preguntando.accion === "darBaja"}
+          iconoConfirmar={ICONO_GRANDE[preguntando.accion]}
           cargando={ocupadas[preguntando.cuenta.id] !== undefined}
           onConfirmar={() => void aplicar(preguntando.cuenta, preguntando.accion)}
           onCancelar={() => setPreguntando(null)}
@@ -304,8 +324,12 @@ export default function PaginaCuentas() {
         className="pointer-events-none fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 flex justify-center px-4 md:bottom-8"
       >
         {aviso && (
-          <p key={aviso.vez} className="vidrio-oscuro rounded-full px-5 py-3 text-center text-sm font-medium text-white">
-            {aviso.texto}
+          <p
+            key={aviso.vez}
+            className="vidrio-oscuro flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-white"
+          >
+            <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0 text-verde" />
+            <span className="min-w-0">{aviso.texto}</span>
           </p>
         )}
       </div>
@@ -366,6 +390,28 @@ const VARIANTE: Record<AccionCuenta, "vidrio" | "azul" | "peligro"> = {
   reactivar: "vidrio",
 };
 
+/** Del juego mini (20/solid), como todo botón chico. Dar acceso lleva un
+ *  sello; quitarlo, el círculo tachado; el rol de admin, el escudo. */
+const ICONO: Record<AccionCuenta, Icono> = {
+  habilitar: CheckBadgeIcon,
+  habilitarAdmin: ShieldCheckIcon,
+  rechazar: NoSymbolIcon,
+  hacerAdmin: ShieldCheckIcon,
+  quitarAdmin: ShieldExclamationIcon,
+  darBaja: NoSymbolIcon,
+  reactivar: ArrowPathIcon,
+};
+
+/** Los mismos, en grande, para el botón de confirmar del diálogo: 24/outline
+ *  los que quitan acceso (van en rojo, con `peligro`), 24/solid los demás. */
+const ICONO_GRANDE: Record<AccionConfirmada, Icono> = {
+  habilitarAdmin: DarAdminGrande,
+  rechazar: QuitarAccesoGrande,
+  hacerAdmin: DarAdminGrande,
+  quitarAdmin: QuitarAdminGrande,
+  darBaja: QuitarAccesoGrande,
+};
+
 interface PropsTarjeta {
   cuenta: Cuenta;
   /** La cuenta de quien mira: no se puede cambiar su propio rol ni su estado. */
@@ -403,6 +449,7 @@ function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAc
     <BotonChico
       key={accion}
       variante={VARIANTE[accion]}
+      icono={ICONO[accion]}
       className={ancho}
       cargando={ocupada === accion}
       disabled={ocupada !== null}
@@ -421,6 +468,7 @@ function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAc
         to={`/admin/historial?organizador=${cuenta.id}`}
         className={`${claseBotonChico("vidrio")} ${ancho}`}
       >
+        <ClockIcon aria-hidden className={claseIconoChico} />
         {t.verHistorial}
       </Link>,
     );
@@ -449,11 +497,20 @@ function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAc
 
       {acciones.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{acciones}</div>}
 
-      {permitidas.motivo && <p className="mt-3 text-sm leading-snug text-tenue">{permitidas.motivo}</p>}
+      {/* El candado dice "esto no se toca" antes de leer el motivo. Los
+          íconos de 16 px bajan 2 px para quedar a la altura del primer
+          renglón aunque el texto se parta en dos. */}
+      {permitidas.motivo && (
+        <p className="mt-3 flex items-start gap-1.5 text-sm leading-snug text-tenue">
+          <LockClosedIcon aria-hidden className={`mt-0.5 ${claseIconoChip}`} />
+          <span className="min-w-0">{permitidas.motivo}</span>
+        </p>
+      )}
 
       {falla && (
-        <p role="alert" className="mt-3 text-sm leading-snug text-rojo">
-          {falla}
+        <p role="alert" className="mt-3 flex items-start gap-1.5 text-sm leading-snug text-rojo">
+          <ExclamationTriangleIcon aria-hidden className={`mt-0.5 ${claseIconoChip}`} />
+          <span className="min-w-0 break-words">{falla}</span>
         </p>
       )}
     </li>
@@ -471,7 +528,11 @@ function CopiarLinkRegistro() {
   return (
     // Sin permiso de portapapeles (o sin HTTPS), useCopiar lo muestra en un
     // cuadro para copiarlo a mano.
-    <BotonChico onClick={() => copiar(link, t.pendientes.etiquetaLink)} aria-live="polite">
+    <BotonChico
+      icono={copiado ? CheckIcon : ClipboardDocumentIcon}
+      onClick={() => copiar(link, t.pendientes.etiquetaLink)}
+      aria-live="polite"
+    >
       {copiado ? comun.verbos.copiado : t.pendientes.copiarLink}
     </BotonChico>
   );

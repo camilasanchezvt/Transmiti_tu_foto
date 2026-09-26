@@ -7,9 +7,16 @@ no existen— sale con la misma forma (sección 5 de CONSTRUIR-APP.md):
 
 /docs dice lo mismo: el 422 de cada endpoint se documenta con RespuestaError
 (ver `_RESPUESTAS_COMUNES`) y no con el {"detail": [...]} que FastAPI pone solo.
+
+El lifespan arranca la limpieza de Cloudinary a los 30 días (app/limpieza.py)
+en segundo plano, sólo en producción y con las credenciales cargadas.
 """
 
 from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -20,6 +27,7 @@ from sqlalchemy.exc import DataError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as ExcepcionHTTP
 
+from . import limpieza
 from .config import obtener_config
 from .database import get_db
 from .errores import Codigo, ErrorApp
@@ -27,6 +35,42 @@ from .routers import admin, cuentas, pantalla, publico
 from .schemas import RespuestaError, Salud
 
 config = obtener_config()
+
+
+@asynccontextmanager
+async def ciclo_de_vida(_app: FastAPI) -> AsyncIterator[None]:
+    """La limpieza se agenda y el arranque sigue: la primera pasada espera
+    ~60 s, así que ni el arranque ni el health check de Render la esperan.
+
+    Apagada en desarrollo y en las pruebas (LIMPIEZA_ACTIVA, ver config.py) y
+    siempre que falte el secreto de Cloudinary.
+
+    Los dos mensajes empiezan con "limpieza:", como todos los del módulo: el
+    log de uvicorn no muestra el nombre del logger, y en Render se busca por esa
+    palabra para confirmar que quedó andando. Apagada en producción es una
+    advertencia: las fotos quedarían en Cloudinary para siempre.
+    """
+    tarea: asyncio.Task[None] | None = None
+    config_actual = obtener_config()
+    if config_actual.limpieza_activa:
+        tarea = asyncio.create_task(limpieza.bucle_de_limpieza())
+        limpieza.log.info(
+            "limpieza: activa, borra de Cloudinary a los %s días de la fecha de cada evento",
+            limpieza.DIAS_HASTA_BORRAR,
+        )
+    elif config_actual.es_produccion:
+        limpieza.log.warning(
+            "limpieza: APAGADA, no se borra nada de Cloudinary "
+            "(LIMPIEZA_ACTIVA=false o faltan credenciales de Cloudinary)"
+        )
+    try:
+        yield
+    finally:
+        if tarea is not None:
+            tarea.cancel()
+            with suppress(asyncio.CancelledError):
+                await tarea
+
 
 app = FastAPI(
     title="Transmití tu foto",
@@ -39,6 +83,7 @@ app = FastAPI(
     ),
     docs_url="/docs",
     redoc_url=None,
+    lifespan=ciclo_de_vida,
 )
 
 app.add_middleware(

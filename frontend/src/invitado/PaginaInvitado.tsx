@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import {
+  ArrowPathIcon as ArrowPathIconLinea,
+  CameraIcon as CameraIconLinea,
+  ExclamationTriangleIcon,
+} from "@heroicons/react/24/outline";
+import { ArrowPathIcon, CameraIcon, CheckCircleIcon } from "@heroicons/react/24/solid";
 
 import { ErrorApi, publico } from "../api/client";
 import type { EventoPublico } from "../api/tipos";
@@ -157,8 +163,13 @@ export default function PaginaInvitado() {
     // volver a escanear el QR.
     return (
       <Pantalla>
+        <Aviso />
         <p className="text-2xl leading-snug">{mensajeDeCarga(errorEvento)}</p>
-        <Boton variante="secundario" onClick={() => setIntentoCarga((n) => n + 1)}>
+        <Boton
+          variante="secundario"
+          icono={ArrowPathIconLinea}
+          onClick={() => setIntentoCarga((n) => n + 1)}
+        >
           {textos.botonReintentar}
         </Boton>
       </Pantalla>
@@ -204,7 +215,9 @@ export default function PaginaInvitado() {
               className="mt-1 min-h-boton w-full rounded-2xl border border-borde bg-hundido px-4 text-lg text-white outline-none focus:border-acento"
             />
           </label>
-          <Boton onClick={() => entrada.current?.click()}>{textos.botonPrincipal}</Boton>
+          <Boton icono={CameraIcon} onClick={() => entrada.current?.click()}>
+            {textos.botonPrincipal}
+          </Boton>
         </>
       )}
 
@@ -239,18 +252,29 @@ export default function PaginaInvitado() {
           <Tilde />
           <h1 className="text-3xl font-semibold">{textos.listoTitulo}</h1>
           <p className="text-xl text-tenue">{textos.listoDetalle}</p>
-          <Boton onClick={() => entrada.current?.click()}>{textos.botonOtra}</Boton>
+          <Boton icono={CameraIcon} onClick={() => entrada.current?.click()}>
+            {textos.botonOtra}
+          </Boton>
         </>
       )}
 
       {estado.paso === "error" && (
         <>
           <VistaPrevia foto={foto} />
+          {/* Sin triángulo cuando ya mandó todas las que podía: es un
+              "¡gracias!", no algo que salió mal. */}
+          {estado.accion !== "ninguno" && <Aviso />}
           <p className="text-xl leading-snug">{estado.mensaje}</p>
           {estado.accion === "reintentar" && foto ? (
-            <Boton onClick={() => enviar(foto)}>{textos.botonReintentar}</Boton>
+            <Boton icono={ArrowPathIcon} onClick={() => enviar(foto)}>
+              {textos.botonReintentar}
+            </Boton>
           ) : estado.accion !== "ninguno" ? (
-            <Boton variante="secundario" onClick={() => entrada.current?.click()}>
+            <Boton
+              variante="secundario"
+              icono={CameraIconLinea}
+              onClick={() => entrada.current?.click()}
+            >
               {textos.botonPrincipal}
             </Boton>
           ) : null}
@@ -281,21 +305,17 @@ function mensajeDeCarga(error: unknown): string {
 }
 
 /** El tilde verde de iOS y no un emoji: los emojis se ven distinto en cada
- *  celular, y unas chispitas dicen poco de que la foto llegó. */
+ *  celular, y unas chispitas dicen poco de que la foto llegó. Decorativo: el
+ *  "¡Llegó!" de abajo es lo que se lee. */
 function Tilde() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-16 w-16 text-verde" aria-hidden>
-      <circle cx="12" cy="12" r="12" fill="currentColor" />
-      <path
-        d="M7 12.4l3.3 3.3L17 9"
-        fill="none"
-        stroke="white"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+  return <CheckCircleIcon aria-hidden className="h-20 w-20 shrink-0 text-verde" />;
+}
+
+/** El triángulo naranja arriba de un error: se entiende de un vistazo que algo
+ *  no salió, antes de leer. Naranja y no rojo: casi siempre alcanza con probar
+ *  de nuevo. */
+function Aviso() {
+  return <ExclamationTriangleIcon aria-hidden className="h-10 w-10 shrink-0 text-naranja" />;
 }
 
 function VistaPrevia({ foto }: { foto: FotoLista | null }) {

@@ -35,6 +35,13 @@ class Config(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173"
     ENTORNO: str = "desarrollo"
 
+    # El borrado automático de Cloudinary a los 30 días (app/limpieza.py). Sin
+    # definir, corre sólo en producción: en desarrollo no hay a quién borrarle
+    # nada, y en las pruebas no puede salir ni un pedido de verdad. Con `true`
+    # o `false` se fuerza. Aun forzado, sin las credenciales de Cloudinary no
+    # arranca: sin el secreto no hay con qué pedir el borrado.
+    LIMPIEZA_ACTIVA: bool | None = None
+
     @property
     def origenes_cors(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
@@ -42,6 +49,14 @@ class Config(BaseSettings):
     @property
     def es_produccion(self) -> bool:
         return self.ENTORNO.lower() == "produccion"
+
+    @property
+    def limpieza_activa(self) -> bool:
+        pedida = self.es_produccion if self.LIMPIEZA_ACTIVA is None else self.LIMPIEZA_ACTIVA
+        credenciales = (
+            self.CLOUDINARY_CLOUD_NAME and self.CLOUDINARY_API_KEY and self.CLOUDINARY_API_SECRET
+        )
+        return bool(pedida and credenciales)
 
     def model_post_init(self, _contexto: object) -> None:
         """Falla al arrancar, no en el primer login, si el despliegue está mal.

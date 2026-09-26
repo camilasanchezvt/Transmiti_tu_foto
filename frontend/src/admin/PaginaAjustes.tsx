@@ -1,14 +1,42 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
+import {
+  ArrowDownTrayIcon as DescargarReposo,
+  ArrowPathIcon as ReabrirReposo,
+  CheckIcon as GuardarReposo,
+  ExclamationTriangleIcon as AvisoIcono,
+  FilmIcon as VideoReposo,
+  PhotoIcon as RevisarReposo,
+  QrCodeIcon as CompartirIcono,
+  StopCircleIcon as TerminarIcono,
+  TrashIcon as BorradoIcono,
+} from "@heroicons/react/24/outline";
+import {
+  ArrowDownTrayIcon as DescargarPrincipal,
+  CheckIcon as GuardarPrincipal,
+  FilmIcon as VideoPrincipal,
+  PaperAirplaneIcon as PublicarPrincipal,
+  PhotoIcon as RevisarPrincipal,
+} from "@heroicons/react/24/solid";
+import {
+  ArrowDownTrayIcon as DescargarMini,
+  ArrowPathIcon as ReintentarMini,
+  CheckIcon as ListoMini,
+  ChevronRightIcon as SeguirMini,
+  MinusIcon as MenosMini,
+  PlusIcon as MasMini,
+} from "@heroicons/react/20/solid";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
 import type { EstadoEvento, EventoAdmin, VideoEvento } from "../api/tipos";
 import Boton, { claseBoton } from "../comp/Boton";
-import BotonChico from "../comp/BotonChico";
+import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import ChipEstado from "../comp/ChipEstado";
 import Confirmar from "../comp/Confirmar";
+import { claseIconoBoton, claseIconoChico, claseIconoChip } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
+import { DIAS_DE_AVISO, diasParaElBorrado, urlDescargaVideo } from "../lib/descargas";
 import { fechaLarga } from "../lib/fecha";
 import LayoutAdmin from "./LayoutAdmin";
 import { esDelHistorial, rutaACompartir, useVolverALista } from "./navegacion";
@@ -18,8 +46,17 @@ import { useAlPerderSesion, useSesion } from "./useSesion";
 
 // Ajustes de un evento (antes "Cierre"), ordenado por el momento en que se usa
 // cada cosa: antes (publicar, configurar la pantalla), durante (revisar
-// fotos), después (video, descargas) y, al final y aparte, Terminar. Quien la
-// abre busca UNA cosa y tiene que encontrarla sin leer el resto.
+// fotos), después (video, descargas) y, al final y aparte, el estado (Terminar,
+// o Reabrir si ya terminó). Quien la abre busca UNA cosa y tiene que
+// encontrarla sin leer el resto.
+//
+// A los 30 días de la fecha del evento se borran de Cloudinary las fotos y los
+// videos (los números quedan). Una semana antes aparece arriba de todo el aviso
+// con las descargas a mano. Desde el DÍA del borrado (no desde que pasa la
+// limpieza del backend, que puede ser a cualquier hora de ese día) no se ofrece
+// nada que dependa de las fotos: ni configurar, ni revisar, ni descargar, ni
+// reabrir. Una descarga empezada ese día podía quedar a medias con la limpieza
+// borrando por detrás; el backend ya responde 410 desde ese día.
 
 const TARJETA = "rounded-3xl border border-borde bg-panel p-5";
 
@@ -59,6 +96,13 @@ function conMayuscula(texto: string): string {
 
 function mensajeDe(error: unknown): string {
   return error instanceof ErrorApi ? error.message : comun.errores.generico;
+}
+
+/** 410: las fotos se borraron mientras la página estaba abierta (la limpieza
+ *  corrió en el medio). Quien lo recibe recarga el evento y la página pasa sola
+ *  a mostrar el borrado, en vez de seguir ofreciendo lo que ya no está. */
+function esBorrado(error: unknown): boolean {
+  return error instanceof ErrorApi && error.esFotosBorradas;
 }
 
 export default function PaginaAjustes() {
@@ -104,6 +148,17 @@ export default function PaginaAjustes() {
   useEffect(() => {
     if (nombre) document.title = comun.tituloPestana(t.pestana(nombre));
   }, [nombre]);
+
+  // Vuelve a pedir el evento: lo usa quien se entera de un borrado (un 410).
+  const recargar = useCallback(() => setIntento((n) => n + 1), []);
+
+  // El video se crea en esta misma página: el link de descarga del aviso usa
+  // el último, no el que había al cargar. Misma regla que el backend para
+  // video_url_listo.
+  const alCambiarVideo = useCallback((v: VideoEvento) => {
+    const url = v.estado === "listo" ? v.url : null;
+    setEvento((ev) => (ev && ev.video_url_listo !== url ? { ...ev, video_url_listo: url } : ev));
+  }, []);
 
   // Mientras el evento recibe fotos, los números se refrescan solos: esta
   // página puede quedar abierta toda la fiesta y "Revisar fotos (3)" no puede
@@ -179,6 +234,12 @@ export default function PaginaAjustes() {
   }
 
   const ocupado = cambiando !== null;
+  const borradas = evento.fotos_borradas_en !== null;
+  // Desde el día del borrado, aunque la limpieza todavía no haya pasado: con
+  // "hoy" de Argentina, como el backend (_exigir_archivos).
+  const dias = diasParaElBorrado(evento.fotos_se_borran_el);
+  const borrando = !borradas && dias !== null && dias <= 0;
+  const sinArchivos = borradas || borrando;
 
   return (
     <LayoutAdmin volver={lista} titulo={evento.nombre}>
@@ -193,91 +254,105 @@ export default function PaginaAjustes() {
       </p>
 
       <div className="flex flex-col gap-10">
+        {/* Arriba de todo, la semana antes del borrado: es lo único con fecha
+            de vencimiento, y se ve sin bajar hasta las descargas. */}
+        {!sinArchivos && <AvisoBorrado evento={evento} alPerderSesion={alPerderSesion} alBorrarse={recargar} />}
+
         {/* ── Antes ─────────────────────────────────────────── */}
-        <Seccion titulo={t.antes}>
-          {evento.estado === "borrador" && (
-            // Lo primero que ve quien acaba de crear el evento: sin publicar,
-            // el QR que ya imprimió no sirve.
-            <div className="rounded-3xl border border-acento/60 bg-panel p-5">
-              <h3 className="text-lg font-semibold">{t.publicarTitulo}</h3>
-              <p className="mt-1 text-sm text-tenue">{t.publicarAviso}</p>
-              <Boton
-                className={`mt-4 ${ANCHO_BOTON}`}
-                cargando={cambiando === "activo"}
-                disabled={ocupado}
-                onClick={() => cambiarEstado("activo")}
+        {/* Con las fotos borradas (o borrándose) no queda nada que preparar:
+            el evento no se puede reabrir y la pantalla no tiene qué mostrar. */}
+        {!sinArchivos && (
+          <Seccion titulo={t.antes}>
+            {evento.estado === "borrador" && (
+              // Lo primero que ve quien acaba de crear el evento: sin publicar,
+              // el QR que ya imprimió no sirve.
+              <div className="rounded-3xl border border-acento/60 bg-panel p-5">
+                <h3 className="text-lg font-semibold">{t.publicarTitulo}</h3>
+                <p className="mt-1 text-sm text-tenue">{t.publicarAviso}</p>
+                <Boton
+                  className={`mt-4 ${ANCHO_BOTON}`}
+                  icono={PublicarPrincipal}
+                  cargando={cambiando === "activo"}
+                  disabled={ocupado}
+                  onClick={() => cambiarEstado("activo")}
+                >
+                  {comun.verbos.publicar}
+                </Boton>
+                {errorEstado ? <ErrorEnLinea error={errorEstado} /> : null}
+              </div>
+            )}
+
+            {evento.estado === "activo" && (
+              <p className="flex items-center gap-2 px-1 text-sm text-tenue">
+                <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-verde" />
+                {t.publicadoAviso}
+              </p>
+            )}
+
+            <Configuracion key={evento.id} evento={evento} onGuardado={setEvento} alPerderSesion={alPerderSesion} />
+
+            {/* El QR, el link y la pantalla viven en la tarjeta del evento, en
+                Eventos: no se duplican acá. El hash le dice a la lista cuál
+                abrir. Un evento del historial no los tiene: terminado o sin
+                publicar a tiempo, ya no le sirven. Uno abierto nunca es del
+                historial, aunque haya pasado la medianoche. */}
+            {!esDelHistorial(evento) && (
+              <Link
+                to={rutaACompartir(evento, lista)}
+                className={
+                  "flex min-h-16 items-center gap-4 rounded-3xl border border-borde bg-panel px-5 py-4 " +
+                  "transition hover:bg-white/15 active:scale-[0.99] " +
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
+                }
               >
-                {comun.verbos.publicar}
-              </Boton>
-              {errorEstado ? <ErrorEnLinea error={errorEstado} /> : null}
-            </div>
-          )}
-
-          {evento.estado === "cerrado" && (
-            <div className={TARJETA}>
-              <h3 className="text-lg font-semibold">{t.terminadoTitulo}</h3>
-              <p className="mt-1 text-sm text-tenue">{t.terminadoAviso}</p>
-              <Boton
-                variante="secundario"
-                className={`mt-4 ${ANCHO_BOTON}`}
-                cargando={cambiando === "activo"}
-                disabled={ocupado}
-                onClick={() => cambiarEstado("activo")}
-              >
-                {t.reabrir}
-              </Boton>
-              {errorEstado ? <ErrorEnLinea error={errorEstado} /> : null}
-            </div>
-          )}
-
-          {evento.estado === "activo" && (
-            <p className="flex items-center gap-2 px-1 text-sm text-tenue">
-              <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-verde" />
-              {t.publicadoAviso}
-            </p>
-          )}
-
-          <Configuracion key={evento.id} evento={evento} onGuardado={setEvento} alPerderSesion={alPerderSesion} />
-
-          {/* El QR, el link y la pantalla viven en la tarjeta del evento, en
-              Eventos: no se duplican acá. El hash le dice a la lista cuál
-              abrir. Un evento del historial no los tiene: terminado o sin
-              publicar a tiempo, ya no le sirven. Uno abierto nunca es del
-              historial, aunque haya pasado la medianoche. */}
-          {!esDelHistorial(evento) && (
-            <Link
-              to={rutaACompartir(evento, lista)}
-              className={
-                "flex min-h-16 items-center gap-4 rounded-3xl border border-borde bg-panel px-5 py-4 " +
-                "transition hover:bg-white/15 active:scale-[0.99] " +
-                "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
-              }
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block text-base font-semibold">{t.compartirTitulo}</span>
-                <span className="mt-0.5 block text-sm text-tenue">{t.compartirDetalle}</span>
-              </span>
-              <span aria-hidden className="text-3xl leading-none text-tenue">
-                ›
-              </span>
-            </Link>
-          )}
-        </Seccion>
+                {/* Con la primera línea (el título), no centrado contra todo
+                    el bloque: la descripción ocupa hasta tres renglones. */}
+                <CompartirIcono aria-hidden className="h-6 w-6 shrink-0 self-start text-acento" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-base font-semibold">{t.compartirTitulo}</span>
+                  <span className="mt-0.5 block text-sm text-tenue">{t.compartirDetalle}</span>
+                </span>
+                <SeguirMini aria-hidden className="h-5 w-5 shrink-0 text-tenue" />
+              </Link>
+            )}
+          </Seccion>
+        )}
 
         {/* ── Durante ───────────────────────────────────────── */}
         <Seccion titulo={t.durante}>
-          <ResumenFotos evento={evento} desdeLista={lista.state} />
+          <ResumenFotos evento={evento} desdeLista={lista.state} borradas={sinArchivos} />
         </Seccion>
 
         {/* ── Después ───────────────────────────────────────── */}
         <Seccion titulo={t.despues}>
-          <VideoDelEvento idEvento={evento.id} aprobadas={evento.aprobadas} alPerderSesion={alPerderSesion} />
-          <Descargas evento={evento} alPerderSesion={alPerderSesion} />
+          {evento.fotos_borradas_en !== null ? (
+            <FotosBorradas titulo={t.borradasTitulo(fechaLarga(evento.fotos_borradas_en))} />
+          ) : borrando ? (
+            // El día del borrado: ya no se ofrece bajar nada, aunque la
+            // limpieza todavía no haya pasado.
+            <FotosBorradas titulo={t.borrandoTitulo} />
+          ) : (
+            <>
+              {/* Siempre a la vista, sin esperar al aviso: quien organiza
+                  sabe desde el primer día hasta cuándo tiene para bajarlas. */}
+              {evento.fotos_se_borran_el && (
+                <p className="px-1 text-sm text-tenue">{t.seBorranEl(fechaLarga(evento.fotos_se_borran_el))}</p>
+              )}
+              <VideoDelEvento
+                evento={evento}
+                onVideo={alCambiarVideo}
+                alPerderSesion={alPerderSesion}
+                alBorrarse={recargar}
+              />
+              <Descargas evento={evento} alPerderSesion={alPerderSesion} alBorrarse={recargar} />
+            </>
+          )}
         </Seccion>
 
-        {/* ── Terminar: al final y aparte, para que no se toque de pasada. Un
-            evento terminado se reabre desde arriba; uno sin publicar no tiene
-            nada que terminar. ─────────────────────────────────────────────── */}
+        {/* ── Estado: al final y aparte, para que no se toque de pasada. Uno
+            abierto se termina; uno terminado se reabre desde acá mismo, salvo
+            desde el día del borrado de sus fotos. Uno sin publicar no tiene nada
+            que terminar: se publica arriba. ─────────────────────────────── */}
         {evento.estado === "activo" && (
           <Seccion titulo={t.final}>
             <div className={TARJETA}>
@@ -285,6 +360,7 @@ export default function PaginaAjustes() {
               <Boton
                 variante="peligro"
                 className={`mt-4 ${ANCHO_BOTON}`}
+                icono={TerminarIcono}
                 disabled={ocupado}
                 onClick={() => {
                   setErrorEstado(null);
@@ -293,6 +369,32 @@ export default function PaginaAjustes() {
               >
                 {comun.verbos.terminarEvento}
               </Boton>
+            </div>
+          </Seccion>
+        )}
+
+        {evento.estado === "cerrado" && (
+          <Seccion titulo={t.estadoTitulo}>
+            <div className={TARJETA}>
+              <h3 className="text-lg font-semibold">{t.terminadoTitulo}</h3>
+              <p className="mt-1 text-sm text-tenue">
+                {borradas ? t.terminadoBorradoAviso : borrando ? t.terminadoBorrandoAviso : t.terminadoAviso}
+              </p>
+              {!sinArchivos && (
+                <>
+                  <Boton
+                    variante="secundario"
+                    className={`mt-4 ${ANCHO_BOTON}`}
+                    icono={ReabrirReposo}
+                    cargando={cambiando === "activo"}
+                    disabled={ocupado}
+                    onClick={() => cambiarEstado("activo")}
+                  >
+                    {t.reabrir}
+                  </Boton>
+                  {errorEstado ? <ErrorEnLinea error={errorEstado} /> : null}
+                </>
+              )}
             </div>
           </Seccion>
         )}
@@ -313,6 +415,7 @@ export default function PaginaAjustes() {
         }
         textoConfirmar={comun.verbos.terminarEvento}
         peligro
+        iconoConfirmar={TerminarIcono}
         cargando={cambiando === "cerrado"}
         onConfirmar={terminar}
         onCancelar={() => {
@@ -345,13 +448,18 @@ function ErrorEnLinea({ error, reintentar }: { error: unknown; reintentar?: () =
   return (
     <div role="alert" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-rojo">
       <p>{mensajeDe(error)}</p>
-      {reintentar && <BotonChico onClick={reintentar}>{comun.errores.reintentar}</BotonChico>}
+      {reintentar && (
+        <BotonChico icono={ReintentarMini} onClick={reintentar}>
+          {comun.errores.reintentar}
+        </BotonChico>
+      )}
     </div>
   );
 }
 
 /** Un <Link> o un <a> con forma de botón grande: ir a otra página o bajar un
- *  archivo es un link, no un botón (se puede abrir en otra pestaña). */
+ *  archivo es un link, no un botón (se puede abrir en otra pestaña). El ícono
+ *  va adentro, a mano, con claseIconoBoton. */
 function claseBotonGrande(variante: "principal" | "secundario"): string {
   return `${claseBoton(variante)} ${DOS_LINEAS} ${ANCHO_BOTON}`;
 }
@@ -452,6 +560,7 @@ function Configuracion({
           type="submit"
           className={ANCHO_BOTON}
           variante={cambio && valido ? "principal" : "secundario"}
+          icono={cambio && valido ? GuardarPrincipal : GuardarReposo}
           cargando={guardando}
           disabled={!valido || !cambio}
         >
@@ -459,8 +568,13 @@ function Configuracion({
         </Boton>
         {/* Siempre en el DOM: una región viva que aparece de golpe no se
             anuncia en todos los lectores de pantalla. */}
-        <p role="status" className="text-center text-sm text-verde sm:text-left">
-          {guardado ? `✓ ${comun.verbos.guardado}` : ""}
+        <p role="status" className="flex items-center justify-center gap-1 text-sm text-verde sm:justify-start">
+          {guardado && (
+            <>
+              <ListoMini aria-hidden className={claseIconoChip} />
+              {comun.verbos.guardado}
+            </>
+          )}
         </p>
       </div>
       {error ? <ErrorEnLinea error={error} /> : null}
@@ -504,7 +618,7 @@ function Ajuste({
 
   const paso =
     "flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-borde bg-panel " +
-    "text-2xl leading-none text-white transition hover:bg-white/15 active:scale-[0.94] " +
+    "text-white transition hover:bg-white/15 active:scale-[0.94] " +
     "disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 " +
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento";
 
@@ -527,7 +641,7 @@ function Ajuste({
           disabled={valido && n <= rango.min}
           onClick={() => mover(-1)}
         >
-          −
+          <MenosMini aria-hidden className="h-5 w-5" />
         </button>
         <input
           id={idCampo}
@@ -551,23 +665,108 @@ function Ajuste({
           disabled={valido && n >= rango.max}
           onClick={() => mover(1)}
         >
-          +
+          <MasMini aria-hidden className="h-5 w-5" />
         </button>
       </div>
     </div>
   );
 }
 
+// ── Arriba de todo: el aviso del borrado ─────────────────────
+
+/**
+ * La semana antes de que se borren las fotos y el video, arriba de la página
+ * y con las descargas a mano: quien entra a buscar otra cosa se entera igual.
+ * Si no hay nada que bajar (un evento sin fotos ni video), no avisa nada.
+ */
+function AvisoBorrado({
+  evento,
+  alPerderSesion,
+  alBorrarse,
+}: {
+  evento: EventoAdmin;
+  alPerderSesion: AlPerderSesion;
+  alBorrarse: () => void;
+}) {
+  const descarga = useDescargaFotos(evento, alPerderSesion, alBorrarse);
+  const dias = evento.fotos_se_borran_el ? diasParaElBorrado(evento.fotos_se_borran_el) : null;
+  const total = evento.pendientes + evento.aprobadas + evento.rechazadas;
+  const video = evento.video_url_listo;
+
+  // El día del borrado (dias <= 0) ya no: la página muestra que se están
+  // borrando, sin descargas. Mandar a descargar justo ese día era mandar a
+  // bajar un ZIP que la limpieza podía vaciar a mitad de camino.
+  if (dias === null || dias <= 0 || dias > DIAS_DE_AVISO || (total === 0 && !video)) return null;
+
+  return (
+    <div className="rounded-3xl border border-naranja/60 bg-panel p-5">
+      <div className="flex items-start gap-3">
+        <AvisoIcono aria-hidden className="h-6 w-6 shrink-0 text-naranja" />
+        <p className="min-w-0 font-semibold leading-snug">{t.avisoBorrado(dias)}</p>
+      </div>
+      {/* Botones chicos: son un atajo a las descargas de más abajo. Sólo lo
+          que tiene algo: "todas" sólo si hay más que las aprobadas. En el
+          celular no entran dos por fila: cada uno va a todo el ancho (grow),
+          en vez de tres renglones serruchados de anchos distintos; en la
+          compu, en fila y del ancho de su texto. */}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {video && (
+          <a
+            href={urlDescargaVideo(video, evento.nombre, evento.fecha_evento)}
+            download
+            className={`grow sm:grow-0 ${claseBotonChico("vidrio")}`}
+          >
+            <DescargarMini aria-hidden className={claseIconoChico} />
+            {t.descargarVideo}
+          </a>
+        )}
+        {evento.aprobadas > 0 && (
+          <BotonChico
+            className="grow sm:grow-0"
+            icono={DescargarMini}
+            cargando={descarga.bajando === "aprobadas"}
+            disabled={descarga.bajando !== null}
+            onClick={() => descarga.descargar("aprobadas")}
+          >
+            {t.descargarAprobadas(evento.aprobadas)}
+          </BotonChico>
+        )}
+        {total > evento.aprobadas && (
+          <BotonChico
+            className="grow sm:grow-0"
+            icono={DescargarMini}
+            cargando={descarga.bajando === "todas"}
+            disabled={descarga.bajando !== null}
+            onClick={() => descarga.descargar("todas")}
+          >
+            {t.descargarTodas(total)}
+          </BotonChico>
+        )}
+      </div>
+      <EstadoDescarga bajando={descarga.bajando} error={descarga.error} />
+    </div>
+  );
+}
+
 // ── Durante: fotos ───────────────────────────────────────────
 
-function ResumenFotos({ evento, desdeLista }: { evento: EventoAdmin; desdeLista: unknown }) {
+function ResumenFotos({
+  evento,
+  desdeLista,
+  borradas,
+}: {
+  evento: EventoAdmin;
+  desdeLista: unknown;
+  borradas: boolean;
+}) {
+  // Con las fotos borradas las pendientes ya no esperan a nadie: sin naranja.
+  const hayPendientes = evento.pendientes > 0 && !borradas;
   const cifras: { etiqueta: string; valor: number; color: string }[] = [
     // Pendientes en naranja sólo si hay: es lo único que espera a alguien.
-    { etiqueta: t.pendientes, valor: evento.pendientes, color: evento.pendientes > 0 ? "text-naranja" : "" },
+    { etiqueta: t.pendientes, valor: evento.pendientes, color: hayPendientes ? "text-naranja" : "" },
     { etiqueta: t.aprobadas, valor: evento.aprobadas, color: "" },
     { etiqueta: t.rechazadas, valor: evento.rechazadas, color: "" },
   ];
-  const hayPendientes = evento.pendientes > 0;
 
   return (
     <div className={TARJETA}>
@@ -580,45 +779,77 @@ function ResumenFotos({ evento, desdeLista }: { evento: EventoAdmin; desdeLista:
           </div>
         ))}
       </dl>
-      {/* Con el mismo state con que se llegó acá: el "‹ Volver" de Revisar
-          fotos lleva a la misma lista de origen (el historial con su filtro). */}
-      <Link
-        to={`/admin/eventos/${evento.id}/revisar`}
-        state={desdeLista}
-        className={`mt-4 ${claseBotonGrande(hayPendientes ? "principal" : "secundario")}`}
-      >
-        {hayPendientes ? t.revisarConPendientes(evento.pendientes) : comun.verbos.revisarFotos}
-      </Link>
-      {!hayPendientes && (
-        <p className="mt-3 text-sm text-tenue">
-          {evento.aprobadas + evento.rechazadas === 0 ? t.sinFotos : t.sinPendientes}
-        </p>
+      {borradas ? (
+        // Los números quedan; las fotos no. Revisar llevaría a una página vacía.
+        <p className="mt-3 text-sm text-tenue">{t.resumenBorradas}</p>
+      ) : (
+        <>
+          {/* Con el mismo state con que se llegó acá: el "‹ Volver" de Revisar
+              fotos lleva a la misma lista de origen (el historial con su filtro). */}
+          <Link
+            to={`/admin/eventos/${evento.id}/revisar`}
+            state={desdeLista}
+            className={`mt-4 ${claseBotonGrande(hayPendientes ? "principal" : "secundario")}`}
+          >
+            {hayPendientes ? (
+              <RevisarPrincipal aria-hidden className={claseIconoBoton} />
+            ) : (
+              <RevisarReposo aria-hidden className={claseIconoBoton} />
+            )}
+            {hayPendientes ? t.revisarConPendientes(evento.pendientes) : comun.verbos.revisarFotos}
+          </Link>
+          {!hayPendientes && (
+            <p className="mt-3 text-sm text-tenue">
+              {evento.aprobadas + evento.rechazadas === 0 ? t.sinFotos : t.sinPendientes}
+            </p>
+          )}
+        </>
       )}
+    </div>
+  );
+}
+
+// ── Después: ya borradas ─────────────────────────────────────
+
+/** En lugar del video y las descargas, desde el día del borrado (se estén
+ *  borrando o ya se hayan borrado): tenue, sin nada que tocar. */
+function FotosBorradas({ titulo }: { titulo: string }) {
+  return (
+    <div className={`${TARJETA} flex items-start gap-3 text-tenue`}>
+      <BorradoIcono aria-hidden className="h-6 w-6 shrink-0" />
+      <div className="min-w-0">
+        <h3 className="text-base font-semibold leading-snug">{titulo}</h3>
+        <p className="mt-1 text-sm">{t.borradasDetalle}</p>
+      </div>
     </div>
   );
 }
 
 // ── Después: video ───────────────────────────────────────────
 
-/** `fl_attachment` hace que Cloudinary lo mande como descarga y no lo reproduzca. */
-function urlDeDescarga(url: string): string {
-  return url.replace("/video/upload/", "/video/upload/fl_attachment/");
-}
-
 function VideoDelEvento({
-  idEvento,
-  aprobadas,
+  evento,
+  onVideo,
   alPerderSesion,
+  alBorrarse,
 }: {
-  idEvento: number;
-  aprobadas: number;
+  evento: EventoAdmin;
+  /** Cada vez que cambia: el aviso de arriba descarga el último. */
+  onVideo: (v: VideoEvento) => void;
   alPerderSesion: AlPerderSesion;
+  alBorrarse: () => void;
 }) {
+  const { id: idEvento, aprobadas } = evento;
   const [video, setVideo] = useState<VideoEvento | null>(null);
   const [errorCarga, setErrorCarga] = useState<unknown>(null);
   const [intento, setIntento] = useState(0);
   const [pidiendo, setPidiendo] = useState(false);
   const [error, setError] = useState<unknown>(null);
+
+  // Lo que se sabe del video lo sabe también la página.
+  useEffect(() => {
+    if (video) onVideo(video);
+  }, [video, onVideo]);
 
   useEffect(() => {
     let vivo = true;
@@ -628,13 +859,15 @@ function VideoDelEvento({
         if (vivo) setVideo(v);
       },
       (e: unknown) => {
-        if (vivo && !alPerderSesion(e)) setErrorCarga(e);
+        if (!vivo || alPerderSesion(e)) return;
+        if (esBorrado(e)) alBorrarse();
+        setErrorCarga(e);
       },
     );
     return () => {
       vivo = false;
     };
-  }, [idEvento, intento, alPerderSesion]);
+  }, [idEvento, intento, alPerderSesion, alBorrarse]);
 
   // Mientras Cloudinary lo crea, se pregunta cada tanto. Cada consulta hace que
   // el backend le pregunte a Cloudinary; no hay aviso del otro lado.
@@ -648,7 +881,8 @@ function VideoDelEvento({
           if (vivo) setVideo(v);
         },
         (e: unknown) => {
-          if (vivo) alPerderSesion(e);
+          if (!vivo || alPerderSesion(e)) return;
+          if (esBorrado(e)) alBorrarse();
         },
       );
     }, CONSULTA_VIDEO_MS);
@@ -656,7 +890,7 @@ function VideoDelEvento({
       vivo = false;
       window.clearInterval(reloj);
     };
-  }, [idEvento, estado, alPerderSesion]);
+  }, [idEvento, estado, alPerderSesion, alBorrarse]);
 
   async function crear() {
     setPidiendo(true);
@@ -664,7 +898,10 @@ function VideoDelEvento({
     try {
       setVideo(await admin.armarVideo(idEvento));
     } catch (e) {
-      if (!alPerderSesion(e)) setError(e);
+      if (!alPerderSesion(e)) {
+        if (esBorrado(e)) alBorrarse();
+        setError(e);
+      }
     } finally {
       setPidiendo(false);
     }
@@ -674,6 +911,8 @@ function VideoDelEvento({
   const duracion = fotosQueEntran * SEGUNDOS_POR_FOTO_VIDEO;
   // Si se aprobaron fotos después de crearlo, el video no las tiene.
   const desactualizado = estado === "listo" && video?.fotos != null && video.fotos < fotosQueEntran;
+  // "Crear" es la acción principal hasta que hay un video; después, descargarlo.
+  const IconoCrear = estado === "listo" ? VideoReposo : VideoPrincipal;
 
   return (
     <div className={TARJETA}>
@@ -721,13 +960,21 @@ function VideoDelEvento({
           {estado !== "procesando" && (
             <div className="mt-4 flex flex-col gap-3 sm:flex-row">
               {estado === "listo" && video.url && (
-                <a href={urlDeDescarga(video.url)} className={claseBotonGrande("principal")}>
+                // Con fl_attachment y el nombre del evento: en el celular se
+                // descarga en vez de abrirse en el reproductor.
+                <a
+                  href={urlDescargaVideo(video.url, evento.nombre, evento.fecha_evento)}
+                  download
+                  className={claseBotonGrande("principal")}
+                >
+                  <DescargarPrincipal aria-hidden className={claseIconoBoton} />
                   {t.descargarVideo}
                 </a>
               )}
               <Boton
                 variante={estado === "listo" ? "secundario" : "principal"}
                 className={`${ANCHO_BOTON} ${DOS_LINEAS}`}
+                icono={IconoCrear}
                 cargando={pidiendo}
                 disabled={aprobadas === 0}
                 onClick={crear}
@@ -752,10 +999,21 @@ function VideoDelEvento({
 
 // ── Después: descargas ───────────────────────────────────────
 
-function Descargas({ evento, alPerderSesion }: { evento: EventoAdmin; alPerderSesion: AlPerderSesion }) {
+interface DescargaFotos {
+  bajando: Incluir | null;
+  error: unknown;
+  descargar: (incluir: Incluir) => Promise<void>;
+}
+
+/** Bajar el ZIP de las fotos. Lo usan la tarjeta de descargas y el aviso del
+ *  borrado, cada uno con su "Preparando…" al lado de lo que se tocó. */
+function useDescargaFotos(
+  evento: EventoAdmin,
+  alPerderSesion: AlPerderSesion,
+  alBorrarse: () => void,
+): DescargaFotos {
   const [bajando, setBajando] = useState<Incluir | null>(null);
   const [error, setError] = useState<unknown>(null);
-  const total = evento.pendientes + evento.aprobadas + evento.rechazadas;
 
   async function descargar(incluir: Incluir) {
     setBajando(incluir);
@@ -775,11 +1033,45 @@ function Descargas({ evento, alPerderSesion }: { evento: EventoAdmin; alPerderSe
       // se le da un rato para que la tome.
       window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (e) {
-      if (!alPerderSesion(e)) setError(e);
+      if (!alPerderSesion(e)) {
+        if (esBorrado(e)) alBorrarse();
+        setError(e);
+      }
     } finally {
       setBajando(null);
     }
   }
+
+  return { bajando, error, descargar };
+}
+
+/** "Preparando el archivo…" mientras baja, o el error si no se pudo. */
+function EstadoDescarga({ bajando, error }: Pick<DescargaFotos, "bajando" | "error">) {
+  return (
+    <>
+      {bajando && (
+        <p role="status" className="mt-3 flex items-center gap-2 text-sm text-acento">
+          <Girando />
+          {t.preparando}
+        </p>
+      )}
+      {error ? <ErrorEnLinea error={error} /> : null}
+    </>
+  );
+}
+
+function Descargas({
+  evento,
+  alPerderSesion,
+  alBorrarse,
+}: {
+  evento: EventoAdmin;
+  alPerderSesion: AlPerderSesion;
+  alBorrarse: () => void;
+}) {
+  const descarga = useDescargaFotos(evento, alPerderSesion, alBorrarse);
+  const { bajando, descargar } = descarga;
+  const total = evento.pendientes + evento.aprobadas + evento.rechazadas;
 
   return (
     <div className={TARJETA}>
@@ -788,6 +1080,7 @@ function Descargas({ evento, alPerderSesion }: { evento: EventoAdmin; alPerderSe
       <div className="mt-4 flex flex-col gap-3 sm:flex-row">
         <Boton
           className={`${ANCHO_BOTON} ${DOS_LINEAS}`}
+          icono={DescargarPrincipal}
           cargando={bajando === "aprobadas"}
           disabled={evento.aprobadas === 0 || bajando !== null}
           onClick={() => descargar("aprobadas")}
@@ -797,6 +1090,7 @@ function Descargas({ evento, alPerderSesion }: { evento: EventoAdmin; alPerderSe
         <Boton
           variante="secundario"
           className={`${ANCHO_BOTON} ${DOS_LINEAS}`}
+          icono={DescargarReposo}
           cargando={bajando === "todas"}
           disabled={total === 0 || bajando !== null}
           onClick={() => descargar("todas")}
@@ -804,13 +1098,7 @@ function Descargas({ evento, alPerderSesion }: { evento: EventoAdmin; alPerderSe
           {t.descargarTodas(total)}
         </Boton>
       </div>
-      {bajando && (
-        <p role="status" className="mt-3 flex items-center gap-2 text-sm text-acento">
-          <Girando />
-          {t.preparando}
-        </p>
-      )}
-      {error ? <ErrorEnLinea error={error} /> : null}
+      <EstadoDescarga bajando={descarga.bajando} error={descarga.error} />
     </div>
   );
 }

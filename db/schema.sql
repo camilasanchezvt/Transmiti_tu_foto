@@ -37,7 +37,10 @@ CREATE TABLE eventos (
   video_public_id text,
   video_url       text,
   video_fotos     int,
-  video_pedido_en timestamptz
+  video_pedido_en timestamptz,
+  -- A los 30 días de fecha_evento se borran de Cloudinary todas las fotos y
+  -- todos los videos del evento. Las filas quedan; esto marca cuándo se borraron.
+  fotos_borradas_en timestamptz
 );
 
 CREATE TABLE fotos (

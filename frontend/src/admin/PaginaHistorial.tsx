@@ -1,3 +1,15 @@
+import {
+  ArrowDownTrayIcon,
+  CalendarDaysIcon,
+  ChevronDownIcon,
+  ClockIcon as ClockIconMini,
+  Cog6ToothIcon,
+  ExclamationTriangleIcon,
+  PhotoIcon,
+  TrashIcon,
+  UsersIcon,
+} from "@heroicons/react/20/solid";
+import { ClockIcon } from "@heroicons/react/24/outline";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 
@@ -6,7 +18,9 @@ import type { Cuenta, EventoAdmin } from "../api/tipos";
 import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import ChipEstado from "../comp/ChipEstado";
+import { claseIconoChico, claseIconoChip, type Icono } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
+import { DIAS_DE_AVISO, diasParaElBorrado, sinArchivos, urlDescargaVideo } from "../lib/descargas";
 import { fechaLarga } from "../lib/fecha";
 import LayoutAdmin from "./LayoutAdmin";
 import { anclaDelEvento, type DesdeLista } from "./navegacion";
@@ -30,7 +44,11 @@ interface Resultado {
  * Se viene acá después de la fiesta: a crear el video, a descargar las fotos o
  * a revisar las que quedaron sin mirar. Por eso cada evento muestra cuántas
  * fotos tiene en cada estado y lleva a Ajustes, que es donde están el video y
- * las descargas.
+ * las descargas. El video, si ya está listo, se descarga desde acá mismo.
+ *
+ * 30 días después de la fecha del evento se borran de Cloudinary las fotos y el
+ * video (las filas quedan). Cada tarjeta dice cuándo, en naranja la última
+ * semana, y una vez borradas ya no ofrece revisar ni descargar nada.
  *
  * Un admin ve los de todas las cuentas y puede quedarse con los de una. Ese
  * filtro va en la URL (?organizador=ID): así la página de Cuentas linkea "Ver
@@ -237,18 +255,10 @@ function FiltroOrganizador({
             </option>
           ))}
         </select>
-        <svg
+        <ChevronDownIcon
           aria-hidden
-          viewBox="0 0 20 20"
           className="pointer-events-none absolute right-3 top-1/2 h-5 w-5 -translate-y-1/2 text-tenue"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={1.8}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M6 8l4 4 4-4" />
-        </svg>
+        />
       </div>
     </div>
   );
@@ -295,6 +305,13 @@ function TarjetaEvento({
   conOrganizador: boolean;
   volver: DesdeLista;
 }) {
+  const hayFotos = e.aprobadas + e.rechazadas + e.pendientes > 0;
+  // Con las fotos borradas (o desde el día del borrado, aunque la limpieza no
+  // haya pasado) no queda nada que mirar ni que bajar: Revisar mostraría la
+  // grilla vacía y el backend ya no manda el video. Mismo corte que Ajustes.
+  const borradas = sinArchivos(e);
+  const video = borradas ? null : e.video_url_listo;
+
   return (
     // scroll-mt: al traerla a la vista por el ancla, que no quede debajo de la
     // barra fija de arriba.
@@ -310,25 +327,47 @@ function TarjetaEvento({
 
       {e.estado === "borrador" && <p className="mt-3 text-sm leading-snug text-tenue">{t.nuncaPublicado}</p>}
 
-      <Totales evento={e} />
+      <Totales evento={e} borradas={borradas} />
 
+      {/* Sin fotos no hay nada que se vaya a borrar: la fecha sería ruido. */}
+      {hayFotos && <Borrado evento={e} />}
+
+      {/* flex-1 y wrap: en un celular el botón que no entra en la fila baja a
+          la siguiente y ocupa todo el ancho, sin cortar el texto. */}
       <div className="mt-4 flex flex-wrap gap-2">
-        {e.pendientes > 0 && (
+        {e.pendientes > 0 && !borradas && (
           <Link
             to={`/admin/eventos/${e.id}/revisar`}
             state={volver}
             aria-label={t.revisarDe(e.nombre)}
-            className={`flex-1 sm:flex-none ${claseBotonChico("azul")}`}
+            className={`flex-1 whitespace-nowrap sm:flex-none ${claseBotonChico("azul")}`}
           >
+            <PhotoIcon aria-hidden className={claseIconoChico} />
             {comun.verbos.revisarFotos}
           </Link>
+        )}
+        {video && (
+          // fl_attachment en la URL hace que Cloudinary lo mande como archivo,
+          // con un nombre que se entiende: en el celular se descarga en vez de
+          // abrirse en el reproductor. `download` solo no alcanza, porque el
+          // navegador lo ignora en un link a otro dominio.
+          <a
+            href={urlDescargaVideo(video, e.nombre, e.fecha_evento)}
+            download
+            aria-label={t.descargarVideoDe(e.nombre)}
+            className={`flex-1 whitespace-nowrap sm:flex-none ${claseBotonChico("vidrio")}`}
+          >
+            <ArrowDownTrayIcon aria-hidden className={claseIconoChico} />
+            {t.descargarVideo}
+          </a>
         )}
         <Link
           to={`/admin/eventos/${e.id}/ajustes`}
           state={volver}
           aria-label={t.ajustesDe(e.nombre)}
-          className={`flex-1 sm:flex-none ${claseBotonChico("vidrio")}`}
+          className={`flex-1 whitespace-nowrap sm:flex-none ${claseBotonChico("vidrio")}`}
         >
+          <Cog6ToothIcon aria-hidden className={claseIconoChico} />
           {comun.verbos.ajustes}
         </Link>
       </div>
@@ -338,8 +377,8 @@ function TarjetaEvento({
 
 /** Tres números, como los resúmenes de Salud o de Fitness: el número grande,
  *  qué es debajo. Lo sin revisar va en naranja porque es lo único que pide
- *  hacer algo. */
-function Totales({ evento: e }: { evento: EventoAdmin }) {
+ *  hacer algo; con las fotos borradas ya no hay nada que hacer y va tenue. */
+function Totales({ evento: e, borradas }: { evento: EventoAdmin; borradas: boolean }) {
   const total = e.aprobadas + e.rechazadas + e.pendientes;
   if (total === 0) {
     // Un evento sin publicar no pudo recibir fotos: ya lo dice su aviso.
@@ -351,7 +390,7 @@ function Totales({ evento: e }: { evento: EventoAdmin }) {
     <dl className="mt-4 grid grid-cols-3 gap-1 rounded-2xl bg-hundido px-2 py-3 text-center">
       <Total n={e.aprobadas} etiqueta={t.totales.aprobadas(e.aprobadas)} />
       <Total n={e.rechazadas} etiqueta={t.totales.rechazadas(e.rechazadas)} />
-      <Total n={e.pendientes} etiqueta={t.totales.pendientes} destacado={e.pendientes > 0} />
+      <Total n={e.pendientes} etiqueta={t.totales.pendientes} destacado={e.pendientes > 0 && !borradas} />
     </dl>
   );
 }
@@ -367,18 +406,64 @@ function Total({ n, etiqueta, destacado = false }: { n: number; etiqueta: string
   );
 }
 
+// ── Borrado ──────────────────────────────────────────────────
+
+/**
+ * Cuándo se borran de Cloudinary las fotos y el video, o cuándo se borraron.
+ * Con el mismo margen de aviso que Ajustes (DIAS_DE_AVISO) y los días contados
+ * con "hoy" en Argentina, como la pasada de limpieza del backend: si no, desde
+ * una compu en otra zona el aviso saldría corrido.
+ */
+function Borrado({ evento: e }: { evento: EventoAdmin }) {
+  if (e.fotos_borradas_en) {
+    return <LineaBorrado icono={TrashIcon} texto={t.borrado.borradas(fechaLarga(e.fotos_borradas_en))} />;
+  }
+  const fecha = fechaLarga(e.fotos_se_borran_el);
+  const dias = diasParaElBorrado(e.fotos_se_borran_el);
+  if (dias !== null && dias <= DIAS_DE_AVISO) {
+    return <LineaBorrado icono={ExclamationTriangleIcon} texto={t.borrado.pronto(fecha, dias)} aviso />;
+  }
+  return <LineaBorrado icono={ClockIconMini} texto={t.borrado.seBorran(fecha)} />;
+}
+
+function LineaBorrado({
+  icono: IconoLinea,
+  texto,
+  aviso = false,
+}: {
+  icono: Icono;
+  texto: string;
+  aviso?: boolean;
+}) {
+  // items-start y el ícono bajado 2 px (el renglón mide 19, el ícono 16): si el
+  // texto ocupa dos renglones, el ícono queda a la altura del primero.
+  const color = aviso ? "font-medium text-naranja" : "text-tenue";
+  return (
+    <p className={`mt-3 flex items-start gap-1.5 text-sm leading-snug ${color}`}>
+      <IconoLinea aria-hidden className={`mt-0.5 ${claseIconoChip}`} />
+      <span className="min-w-0">{texto}</span>
+    </p>
+  );
+}
+
 // ── Vacío ────────────────────────────────────────────────────
 
 function Vacio({ titulo, filtrado, onVerTodos }: { titulo: string; filtrado: boolean; onVerTodos: () => void }) {
   return (
     <div className="flex flex-col items-center gap-3 rounded-3xl border border-borde bg-panel px-5 py-10 text-center">
+      {/* El símbolo grande arriba, como los estados vacíos de iOS: el mismo
+          reloj de la pestaña Historial. */}
+      <ClockIcon aria-hidden className="h-10 w-10 text-tenue" />
       <h2 className="text-lg font-semibold leading-snug">{titulo}</h2>
       <p className="max-w-sm leading-snug text-tenue">{filtrado ? t.vacio.textoFiltrado : t.vacio.texto}</p>
       <div className="mt-2">
         {filtrado ? (
-          <BotonChico onClick={onVerTodos}>{t.vacio.verTodos}</BotonChico>
+          <BotonChico icono={UsersIcon} onClick={onVerTodos}>
+            {t.vacio.verTodos}
+          </BotonChico>
         ) : (
           <Link to="/admin" className={claseBotonChico("vidrio")}>
+            <CalendarDaysIcon aria-hidden className={claseIconoChico} />
             {t.vacio.irAEventos}
           </Link>
         )}

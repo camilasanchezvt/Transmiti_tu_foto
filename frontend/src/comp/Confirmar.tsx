@@ -1,8 +1,10 @@
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { ExclamationTriangleIcon } from "@heroicons/react/24/outline";
 
 import { comun } from "../admin/textos/comun";
 import Boton from "./Boton";
+import type { Icono } from "./icono";
 
 interface Props {
   abierto: boolean;
@@ -11,8 +13,15 @@ interface Props {
   textoConfirmar: string;
   /** Por defecto "Cancelar". */
   textoCancelar?: string;
-  /** Para lo que no tiene vuelta atrás fácil: el botón de confirmar va en rojo. */
+  /** Para lo que no tiene vuelta atrás fácil: el botón de confirmar va en rojo
+   *  y el título lleva el triángulo de aviso. */
   peligro?: boolean;
+  /**
+   * El ícono del botón de confirmar, el mismo que tiene la acción en la página
+   * (StopCircleIcon para terminar, NoSymbolIcon para dar de baja…). Del juego
+   * 24/solid si confirma algo común, 24/outline si es `peligro`. Opcional.
+   */
+  iconoConfirmar?: Icono;
   /** Mientras se espera la respuesta: el botón muestra "Esperá…" y el diálogo
    *  no se cierra ni con Escape ni tocando afuera. */
   cargando?: boolean;
@@ -22,8 +31,9 @@ interface Props {
 
 /**
  * Diálogo de confirmación, de vidrio, para las pocas acciones que merecen una
- * pregunta (terminar el evento, dar de baja una cuenta). Revisar fotos NO lo
- * usa: ahí la red de seguridad es Deshacer.
+ * pregunta (terminar el evento, dar de baja una cuenta, aprobar todas las
+ * fotos de una vez). Aprobar o rechazar una sola foto NO lo usa: ahí la red de
+ * seguridad es Deshacer.
  *
  * El foco arranca en Cancelar, no en Confirmar: un Enter de más no puede
  * terminar un evento. Escape y tocar afuera cancelan.
@@ -40,6 +50,7 @@ export default function Confirmar({
   textoConfirmar,
   textoCancelar = comun.cancelar,
   peligro = false,
+  iconoConfirmar,
   cargando = false,
   onConfirmar,
   onCancelar,
@@ -126,8 +137,16 @@ export default function Confirmar({
         onKeyDown={atraparFoco}
         className="w-full max-w-sm rounded-3xl border border-borde bg-panel p-6"
       >
-        <h2 id={idTitulo} className="text-xl font-semibold">
-          {titulo}
+        {/* Con peligro, el triángulo rojo va pegado al título, alineado a la
+            primera línea: el título puede ocupar dos con un nombre largo. */}
+        <h2
+          id={idTitulo}
+          className={`text-xl font-semibold ${peligro ? "flex items-start gap-2" : ""}`}
+        >
+          {peligro && (
+            <ExclamationTriangleIcon aria-hidden className="mt-0.5 h-6 w-6 shrink-0 text-rojo" />
+          )}
+          <span className="min-w-0 break-words">{titulo}</span>
         </h2>
         <div id={idMensaje} className="mt-2 text-base leading-snug text-tenue">
           {mensaje}
@@ -139,7 +158,12 @@ export default function Confirmar({
           <Boton variante="secundario" data-cancelar="" onClick={onCancelar} disabled={cargando}>
             {textoCancelar}
           </Boton>
-          <Boton variante={peligro ? "peligro" : "principal"} cargando={cargando} onClick={onConfirmar}>
+          <Boton
+            variante={peligro ? "peligro" : "principal"}
+            icono={iconoConfirmar}
+            cargando={cargando}
+            onClick={onConfirmar}
+          >
             {textoConfirmar}
           </Boton>
         </div>

@@ -125,6 +125,11 @@ class Evento(Base):
     video_fotos: Mapped[int | None] = mapped_column(Integer)
     video_pedido_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # A los 30 días de la fecha del evento se borran de Cloudinary todas sus
+    # fotos y todos sus videos (app/limpieza.py). Las filas quedan: esto marca
+    # que los archivos ya no existen. NULL mientras no se borraron.
+    fotos_borradas_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
     usuario: Mapped[Usuario] = relationship(back_populates="eventos")
     fotos: Mapped[list["Foto"]] = relationship(
         back_populates="evento", cascade="all, delete-orphan"

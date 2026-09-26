@@ -1,8 +1,20 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
+import {
+  CalendarDaysIcon as EventosReposo,
+  ClockIcon as HistorialReposo,
+  UsersIcon as CuentasReposo,
+} from "@heroicons/react/24/outline";
+import {
+  CalendarDaysIcon as EventosActivo,
+  ClockIcon as HistorialActivo,
+  UsersIcon as CuentasActivo,
+} from "@heroicons/react/24/solid";
+import { ArrowRightStartOnRectangleIcon, ChevronLeftIcon } from "@heroicons/react/20/solid";
 
 import { ErrorApi, admin } from "../api/client";
 import { claseBotonChico } from "../comp/BotonChico";
+import { claseIconoChico, type Icono } from "../comp/icono";
 import { comun } from "./textos/comun";
 import { olvidarSesion, revalidarSesion, useSesion } from "./useSesion";
 
@@ -26,14 +38,24 @@ interface Props {
 interface Seccion {
   a: string;
   texto: string;
-  icono: ReactNode;
+  /** Como en la barra de iOS: de trazo en reposo, relleno en la activa. */
+  icono: { reposo: Icono; activo: Icono };
   soloAdmin?: boolean;
 }
 
 const SECCIONES: Seccion[] = [
-  { a: "/admin", texto: comun.nav.eventos, icono: <IconoEventos /> },
-  { a: "/admin/historial", texto: comun.nav.historial, icono: <IconoHistorial /> },
-  { a: "/admin/cuentas", texto: comun.nav.cuentas, icono: <IconoCuentas />, soloAdmin: true },
+  { a: "/admin", texto: comun.nav.eventos, icono: { reposo: EventosReposo, activo: EventosActivo } },
+  {
+    a: "/admin/historial",
+    texto: comun.nav.historial,
+    icono: { reposo: HistorialReposo, activo: HistorialActivo },
+  },
+  {
+    a: "/admin/cuentas",
+    texto: comun.nav.cuentas,
+    icono: { reposo: CuentasReposo, activo: CuentasActivo },
+    soloAdmin: true,
+  },
 ];
 
 /**
@@ -95,6 +117,7 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
           <div className="ml-auto flex min-w-0 items-center gap-3">
             {usuario && <span className="min-w-0 truncate text-sm text-tenue">{usuario.nombre}</span>}
             <button type="button" onClick={salir} className={`shrink-0 ${claseBotonChico("vidrio")}`}>
+              <ArrowRightStartOnRectangleIcon aria-hidden className={claseIconoChico} />
               {comun.salir}
             </button>
           </div>
@@ -107,9 +130,9 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
         {volver && (
           <Link
             to={volver.a}
-            className="-ml-1 mb-2 inline-flex min-h-11 items-center gap-1 rounded-full px-1 text-base text-acento hover:brightness-110"
+            className="-ml-1.5 mb-2 inline-flex min-h-11 items-center gap-0.5 rounded-full pr-1 text-base text-acento hover:brightness-110"
           >
-            <span aria-hidden className="text-2xl leading-none">‹</span>
+            <ChevronLeftIcon aria-hidden className="h-6 w-6 shrink-0" />
             {volver.texto}
           </Link>
         )}
@@ -139,15 +162,22 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
                   (isActive ? "text-acento" : "text-tenue")
                 }
               >
-                <span className="relative">
-                  {s.icono}
-                  {s.soloAdmin && (
-                    <span className="absolute -right-3 -top-1.5">
-                      <Contador n={pendientes} />
-                    </span>
-                  )}
-                </span>
-                {s.texto}
+                {({ isActive }) => {
+                  const IconoPestana = isActive ? s.icono.activo : s.icono.reposo;
+                  return (
+                    <>
+                      <span className="relative">
+                        <IconoPestana aria-hidden className="h-6 w-6" />
+                        {s.soloAdmin && (
+                          <span className="absolute -right-3 -top-1.5">
+                            <Contador n={pendientes} />
+                          </span>
+                        )}
+                      </span>
+                      {s.texto}
+                    </>
+                  );
+                }}
               </NavLink>
             </li>
           ))}
@@ -195,52 +225,4 @@ function usePendientes(esAdmin: boolean, dado: number | undefined): number {
 
   if (!esAdmin) return 0;
   return dado ?? contadas;
-}
-
-// Íconos de trazo, del tamaño y el grosor de los de la barra de iOS.
-
-function Icono({ children }: { children: ReactNode }) {
-  return (
-    <svg
-      aria-hidden
-      viewBox="0 0 24 24"
-      className="h-6 w-6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.8}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      {children}
-    </svg>
-  );
-}
-
-function IconoEventos() {
-  return (
-    <Icono>
-      <rect x="3.5" y="5" width="17" height="15.5" rx="3" />
-      <path d="M3.5 10h17M8 3v4M16 3v4" />
-    </Icono>
-  );
-}
-
-function IconoHistorial() {
-  return (
-    <Icono>
-      <path d="M4 12a8 8 0 1 0 2.3-5.6" />
-      <path d="M4 4v4h4" />
-      <path d="M12 8v4l2.5 2" />
-    </Icono>
-  );
-}
-
-function IconoCuentas() {
-  return (
-    <Icono>
-      <circle cx="9" cy="8.5" r="3.5" />
-      <path d="M2.5 20c.8-3.4 3.3-5.5 6.5-5.5s5.7 2.1 6.5 5.5" />
-      <path d="M15.5 5.2a3.5 3.5 0 0 1 0 6.6M18 14.9c1.8.8 3 2.5 3.5 5.1" />
-    </Icono>
-  );
 }

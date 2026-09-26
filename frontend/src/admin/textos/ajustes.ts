@@ -1,9 +1,12 @@
 // Textos de Ajustes del evento (antes "Cierre").
 //
 // La página va ordenada por momento: antes, durante y después del evento, y al
-// final Terminar. Quien la abre suele estar apurado y con el celular: frases
+// final el estado (Terminar o, si ya terminó, Reabrir). Arriba de todo, desde
+// una semana antes de que se borren las fotos y el video, el aviso. Quien la abre suele estar apurado y con el celular: frases
 // cortas, y cada botón dice lo que hace. Los verbos compartidos (Publicar,
 // Descargar, Revisar fotos, Guardar…) viven en comun.ts; acá, lo propio.
+
+import { comun } from "./comun";
 
 /** "45 s", "1 min", "7 min 30 s". Sin espacios que corten: la duración va
  *  dentro de un botón y en un celular no puede partirse en "7 min" / "30 s". */
@@ -21,6 +24,28 @@ export const ajustes = {
   noEncontrado: "No encontramos este evento",
   noEncontradoDetalle: "Puede que el link esté mal o que el evento no sea tuyo.",
 
+  // ── Borrado de las fotos y el video ──────────────────────
+  // A los 30 días de la fecha del evento se borran solos. Las cuentas de
+  // fotos quedan; las fotos y los videos, no.
+
+  /** Arriba de todo, desde 7 días antes y hasta la víspera. `dias` es
+   *  cuántos faltan (1 o más): el día del borrado ya no se ofrece descargar,
+   *  y la página dice `borrandoTitulo`. */
+  avisoBorrado: (dias: number) =>
+    dias <= 1
+      ? "Mañana se borran las fotos y el video. Descargalos hoy."
+      : `En ${dias} días se borran las fotos y el video. Descargalos antes.`,
+  /** Siempre, en "Después del evento". `fecha` ya viene escrita. */
+  seBorranEl: (fecha: string) => `Las fotos y el video se borran el ${fecha}.`,
+  borradasTitulo: (fecha: string) => `Las fotos y el video se borraron el ${fecha}`,
+  /** El día del borrado, mientras la limpieza todavía no pasó: ya no se
+   *  pueden bajar. */
+  borrandoTitulo: "Las fotos y el video se están borrando",
+  borradasDetalle: "Se borran solos a los 30 días de la fecha del evento.",
+  /** Debajo de los números, cuando ya no hay fotos que revisar (el porqué
+   *  lo dice la tarjeta de abajo, en "Después del evento"). */
+  resumenBorradas: "Lo que llegó al evento.",
+
   // ── Antes del evento ─────────────────────────────────────
   antes: "Antes del evento",
 
@@ -29,11 +54,6 @@ export const ajustes = {
     "Mientras no lo publiques, el QR no funciona: quien lo escanee no va a poder mandar fotos. La pantalla tampoco se puede conectar.",
 
   publicadoAviso: "Publicado. El QR ya recibe fotos.",
-
-  terminadoTitulo: "El evento terminó",
-  terminadoAviso:
-    "No recibe fotos nuevas. La pantalla muestra el cierre y las aprobadas siguen pasando. Si lo reabrís, el QR vuelve a recibir fotos.",
-  reabrir: "Reabrir",
 
   configTitulo: "Pantalla e invitados",
   segundos: "Segundos por foto",
@@ -73,7 +93,7 @@ export const ajustes = {
     `Creando el video${fotos ? ` con ${fotos} fotos` : ""}. Puede tardar unos minutos. Podés salir de esta página: cuando vuelvas va a estar acá.`,
   videoFallo: "No se pudo crear el video. Probá de nuevo.",
   videoDesactualizado: "Aprobaste fotos después de crearlo. Si querés que aparezcan, crealo de nuevo.",
-  descargarVideo: "Descargar video",
+  descargarVideo: comun.verbos.descargarVideo,
   videoCargando: "Buscando el video…",
 
   descargaTitulo: "Descargar fotos",
@@ -85,11 +105,21 @@ export const ajustes = {
   nombreArchivo: (evento: string, fecha: string, incluir: "aprobadas" | "todas") =>
     `${evento} - ${fecha} - ${incluir}.zip`,
 
-  // ── Terminar ─────────────────────────────────────────────
+  // ── Estado: terminar o reabrir ───────────────────────────
   final: "Cuando termine",
   terminarDetalle:
     "Deja de recibir fotos nuevas y la pantalla muestra el cierre. Las aprobadas siguen pasando y lo podés reabrir.",
   confirmarTitulo: "¿Terminar el evento?",
   confirmarMensaje:
     "Deja de recibir fotos nuevas. La pantalla muestra el cierre y las aprobadas siguen pasando. Si hace falta, lo podés reabrir.",
+
+  estadoTitulo: "Estado del evento",
+  terminadoTitulo: "El evento terminó",
+  terminadoAviso:
+    "No recibe fotos nuevas. La pantalla muestra el cierre y las aprobadas siguen pasando. Si lo reabrís, el QR vuelve a recibir fotos.",
+  terminadoBorradoAviso:
+    "No recibe fotos y la pantalla ya no muestra ninguna. Como las fotos se borraron, ya no se puede reabrir.",
+  terminadoBorrandoAviso:
+    "No recibe fotos y la pantalla ya no muestra ninguna. Como las fotos se están borrando, ya no se puede reabrir.",
+  reabrir: "Reabrir",
 } as const;

@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { CalendarDaysIcon } from "@heroicons/react/24/outline";
+import { PaperAirplaneIcon, PlusIcon } from "@heroicons/react/24/solid";
+import {
+  CheckCircleIcon,
+  ChevronRightIcon,
+  Cog6ToothIcon,
+  ExclamationTriangleIcon,
+  PhotoIcon,
+  XMarkIcon,
+} from "@heroicons/react/20/solid";
 
 import { ErrorApi, admin, tokenDeSesion } from "../api/client";
 import type { Cuenta, EventoAdmin } from "../api/tipos";
@@ -7,8 +17,9 @@ import Boton from "../comp/Boton";
 import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import ChipEstado from "../comp/ChipEstado";
+import { claseIconoChico } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
-import { fechaLarga } from "../lib/fecha";
+import { fechaLarga, hoyEnArgentina } from "../lib/fecha";
 import CompartirEvento from "./CompartirEvento";
 import LayoutAdmin from "./LayoutAdmin";
 import { anclaDelEvento, useEventoDelAncla } from "./navegacion";
@@ -21,6 +32,21 @@ type AlCambiar = (evento: EventoAdmin) => void;
 const CAMPO =
   "mt-1 block h-12 w-full min-w-0 rounded-xl border border-borde bg-hundido px-3 " +
   "text-base text-white outline-none focus:border-acento";
+
+/** Las fotos y el video se borran a los 30 días de la fecha del evento
+ *  (backend, limpieza.DIAS_HASTA_BORRAR). */
+const DIAS_HASTA_BORRAR = 30;
+
+/**
+ * La fecha más vieja con la que se puede crear un evento: hace 29 días. Una de
+ * hace 30 o más nacería con las fotos vencidas y el backend la rechaza (casi
+ * siempre es el año mal puesto). Una de hace menos sí vale: sirve para juntar
+ * las fotos de una fiesta que ya pasó. Con "hoy" de Argentina, como el backend.
+ */
+function fechaMinima(hoy: string = hoyEnArgentina()): string {
+  const dia = Date.parse(`${hoy}T00:00:00Z`) - (DIAS_HASTA_BORRAR - 1) * 86_400_000;
+  return new Date(dia).toISOString().slice(0, 10);
+}
 
 /**
  * Los eventos que están por delante: crear uno, publicarlo y compartirlo.
@@ -145,9 +171,7 @@ export default function PaginaEventos() {
             }
           >
             {t.alHistorial}
-            <span aria-hidden className="text-lg leading-none">
-              ›
-            </span>
+            <ChevronRightIcon aria-hidden className="h-5 w-5 shrink-0" />
           </Link>
         </div>
       )}
@@ -219,6 +243,7 @@ function FormularioCrear({
 
   // Si no hay a quién más elegir, el selector sobra.
   const conPara = otras.length > 0;
+  const minima = fechaMinima();
 
   async function crear(evento: FormEvent) {
     evento.preventDefault();
@@ -260,7 +285,7 @@ function FormularioCrear({
         className={
           "grid gap-3 sm:items-end " +
           (conPara
-            ? "grid-cols-2 md:grid-cols-[minmax(0,1fr)_9.5rem_10rem_auto]"
+            ? "grid-cols-2 md:grid-cols-[minmax(0,1fr)_9.5rem_9.5rem_auto]"
             : "sm:grid-cols-[minmax(0,1fr)_10rem_auto]")
         }
       >
@@ -279,10 +304,19 @@ function FormularioCrear({
 
         <label className="min-w-0 text-sm text-tenue">
           {t.crear.fecha}
+          {/* min: el selector no deja elegir una fecha que el backend
+              rechazaría. Si se tipea igual (el año mal puesto), el aviso del
+              navegador dice lo mismo que el backend y no el genérico. */}
           <input
             type="date"
             value={fecha}
-            onChange={(e) => setFecha(e.target.value)}
+            min={minima}
+            onChange={(e) => {
+              setFecha(e.target.value);
+              e.currentTarget.setCustomValidity(
+                e.target.value && e.target.value < minima ? t.crear.fechaVieja : "",
+              );
+            }}
             required
             className={CAMPO}
           />
@@ -311,11 +345,14 @@ function FormularioCrear({
         )}
 
         {/* En fila, 48 px como los campos; apilado en el celular, los 56 px
-            del botón grande. */}
+            del botón grande. En fila, px-5 y "Para" en 9.5rem: con el ícono,
+            un px-8 le comía 24 px a Nombre y el ejemplo se cortaba ("…y Jua")
+            de 768 px para arriba. */}
         <Boton
           type="submit"
           cargando={creando}
-          className={`sm:min-h-12 sm:px-8 ${conPara ? "col-span-2 md:col-span-1" : ""}`}
+          icono={PlusIcon}
+          className={`sm:min-h-12 sm:px-5 ${conPara ? "col-span-2 md:col-span-1" : ""}`}
         >
           {t.crear.boton}
         </Boton>
@@ -335,6 +372,7 @@ function FormularioCrear({
 function Vacio() {
   return (
     <div className="rounded-3xl border border-borde bg-panel px-5 py-10 text-center">
+      <CalendarDaysIcon aria-hidden className="mx-auto mb-3 h-12 w-12 text-tenue" />
       <p className="text-lg font-semibold">{t.vacio.titulo}</p>
       <p className="mx-auto mt-2 max-w-md text-base leading-snug text-tenue">{t.vacio.texto}</p>
     </div>
@@ -387,9 +425,11 @@ function TarjetaEvento({
           to={`/admin/eventos/${evento.id}/revisar`}
           className={claseBotonChico(hayPorRevisar ? "azul" : "vidrio")}
         >
+          <PhotoIcon aria-hidden className={claseIconoChico} />
           {t.tarjeta.revisarFotos(evento.pendientes)}
         </Link>
         <Link to={`/admin/eventos/${evento.id}/ajustes`} className={claseBotonChico("vidrio")}>
+          <Cog6ToothIcon aria-hidden className={claseIconoChico} />
           {t.tarjeta.ajustes}
         </Link>
       </div>
@@ -439,11 +479,16 @@ function Publicar({ evento, texto, onCambio }: { evento: EventoAdmin; texto: str
   return (
     <div className="mt-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="flex items-center gap-2 text-sm text-naranja">
-          <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-naranja" />
+        <p className="flex items-start gap-2 text-sm leading-5 text-naranja">
+          <ExclamationTriangleIcon aria-hidden className="h-5 w-5 shrink-0" />
           {t.tarjeta.avisoSinPublicar}
         </p>
-        <Boton onClick={publicar} cargando={publicando} className="sm:w-auto sm:shrink-0 sm:px-10">
+        <Boton
+          onClick={publicar}
+          cargando={publicando}
+          icono={PaperAirplaneIcon}
+          className="sm:w-auto sm:shrink-0 sm:px-10"
+        >
           {texto}
         </Boton>
       </div>
@@ -501,7 +546,7 @@ function RecienCreado({
             <ChipEstado estado={evento.estado} />
           </div>
         </div>
-        <BotonChico onClick={onCerrar} className="shrink-0">
+        <BotonChico onClick={onCerrar} icono={XMarkIcon} className="shrink-0">
           {t.recienCreado.cerrar}
         </BotonChico>
       </div>
@@ -509,7 +554,8 @@ function RecienCreado({
       {evento.estado === "borrador" ? (
         <Publicar evento={evento} texto={t.recienCreado.publicarAhora} onCambio={onCambio} />
       ) : (
-        <p role="status" className="mt-4 text-sm font-medium text-verde">
+        <p role="status" className="mt-4 flex items-start gap-2 text-sm font-medium leading-5 text-verde">
+          <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0" />
           {t.recienCreado.publicado}
         </p>
       )}

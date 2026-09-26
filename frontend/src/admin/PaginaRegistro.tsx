@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+import { CheckCircleIcon } from "@heroicons/react/24/solid";
 
 import { cuentas } from "../api/client";
 import Boton from "../comp/Boton";
@@ -239,14 +240,9 @@ function Listo({ email, onVolver }: { email: string; onVolver: () => void }) {
   return (
     <MarcoAcceso>
       <section className="flex flex-col items-center gap-4 rounded-3xl border border-borde bg-panel p-5 text-center sm:p-6">
-        <span
-          aria-hidden="true"
-          className="flex h-14 w-14 items-center justify-center rounded-full bg-verde/15 text-verde"
-        >
-          <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth={2.5}>
-            <path d="M5 12.5l4.5 4.5L19 7.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </span>
+        {/* El círculo verde con tilde de iOS (24/solid): el tilde queda calado
+            y se ve el fondo de la tarjeta. */}
+        <CheckCircleIcon aria-hidden className="h-16 w-16 shrink-0 text-verde" />
         <h1 ref={refTitulo} tabIndex={-1} className="text-2xl font-semibold tracking-tight outline-none">
           {t.titulo}
         </h1>

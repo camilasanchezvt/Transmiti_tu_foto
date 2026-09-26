@@ -17,6 +17,9 @@ export const textosEventos = {
     nombre: "Nombre",
     nombreEjemplo: "Casamiento de Ana y Juan",
     fecha: "Fecha",
+    /** Una fecha de hace 30 días o más: sus fotos ya estarían vencidas. Casi
+     *  siempre es el año mal puesto. Mismo texto que el backend. */
+    fechaVieja: "Esa fecha ya pasó hace 30 días o más. Revisá el año",
     /** Sólo lo ve un admin: a nombre de quién queda el evento. */
     para: "Para",
     paraMi: "Mí",

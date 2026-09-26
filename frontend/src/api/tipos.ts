@@ -124,6 +124,18 @@ export interface EventoAdmin {
   /** Dueño del evento. Un organizador sólo ve los suyos; un admin, todos. */
   organizador_id: number;
   organizador_nombre: string;
+  /**
+   * Fecha (YYYY-MM-DD) en que se borran de Cloudinary todas las fotos y todos
+   * los videos del evento: fecha_evento + 30 días. Las filas de la base quedan.
+   * Se borran en la primera pasada de limpieza con hoy (Argentina) >= esta fecha.
+   */
+  fotos_se_borran_el: string;
+  /** Cuándo se borraron (ISO con zona), o null si todavía están. Con esto
+   *  puesto el evento queda cerrado y no se ofrece ni descarga ni video. */
+  fotos_borradas_en: string | null;
+  /** La URL del último video si está listo y las fotos no se borraron; si no,
+   *  null. Es lo que usa el botón "Descargar video". */
+  video_url_listo: string | null;
 }
 
 /** Query de GET /api/admin/eventos. Sin alcance vienen todos. Regla de

@@ -70,6 +70,20 @@ export const textosRevisar = {
     texto: "Las nuevas aparecen acá solas.",
   },
 
+  /** A los 30 días de la fecha del evento se borran las fotos y el video. En
+   *  vez de la bandeja va esto, sin miniaturas (serían imágenes rotas). */
+  borradas: {
+    titulo: "Las fotos de este evento ya se borraron",
+    /** La fecha ya viene escrita: "sábado 26 de septiembre". */
+    texto: (fecha: string) => `Se borraron el ${fecha}. Las fotos se guardan 30 días después del evento.`,
+  },
+
+  /** El día del borrado, antes de que termine: ya no se muestran. */
+  borrando: {
+    titulo: "Las fotos de este evento se están borrando",
+    texto: "Las fotos se guardan 30 días después del evento.",
+  },
+
   avisos: {
     fallo: "Una foto no se pudo guardar y volvió a la lista",
     falloVarias: "Las fotos no se pudieron guardar y volvieron a la lista",

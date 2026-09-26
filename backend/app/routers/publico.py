@@ -55,8 +55,13 @@ _CLAVE_FOTOS = "fotos"
 
 
 def _exigir_abierto(evento: Evento) -> None:
-    """Un evento cerrado rechaza subidas nuevas, pero sigue sirviendo la pantalla."""
-    if evento.estado == "cerrado":
+    """Un evento cerrado rechaza subidas nuevas, pero sigue sirviendo la pantalla.
+
+    Uno con las fotos ya borradas de Cloudinary también, aunque figure abierto:
+    la limpieza lo cierra al borrar, y el panel no lo deja reabrir, pero una
+    foto que entrara después quedaría en Cloudinary para siempre.
+    """
+    if evento.estado == "cerrado" or evento.fotos_borradas_en is not None:
         raise ErrorApp(Codigo.EVENTO_CERRADO)
 
 

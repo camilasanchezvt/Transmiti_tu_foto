@@ -15,6 +15,7 @@ import zipfile
 import pytest
 from sqlalchemy import select
 
+from app.cloudinary_service import NOMBRE_FALTANTES
 from app.models import Evento, Foto
 from tests.conftest import CODIGO_ACTIVO, sin_base, url_de
 
@@ -321,7 +322,10 @@ def test_una_url_rota_no_tira_abajo_la_descarga(autorizado, eventos, db):
     assert r.status_code == 200
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         assert z.testzip() is None
-        assert len(z.namelist()) == 5, "las otras cinco llegaron igual"
+        nombres = z.namelist()
+        assert len([n for n in nombres if n != NOMBRE_FALTANTES]) == 5, "las otras cinco llegaron igual"
+        assert NOMBRE_FALTANTES in nombres, "y el ZIP avisa que falta una"
+        assert "1 de las 6" in z.read(NOMBRE_FALTANTES).decode("utf-8")
 
 
 def test_el_zip_se_arma_en_streaming(eventos):

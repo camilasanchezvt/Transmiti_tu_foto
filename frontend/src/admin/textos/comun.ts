@@ -63,9 +63,11 @@ export const comun = {
     ajustes: "Ajustes",
     descargar: "Descargar",
     descargarQR: "Descargar QR para imprimir",
+    /** Igual en Ajustes y en Historial. */
+    descargarVideo: "Descargar video",
     copiar: "Copiar",
     copiado: "Copiado",
-    deshacer: "↶ Deshacer",
+    deshacer: "Deshacer",
     guardar: "Guardar",
     guardado: "Guardado",
     terminarEvento: "Terminar el evento",

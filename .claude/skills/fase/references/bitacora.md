@@ -372,6 +372,61 @@ Además, `@heroicons/react` quedó autorizado por pedido de la usuaria (sección
 2): outline 24 para la mayoría, solid para acciones principales, mini 20 para
 chips y botones chicos, y el ícono acompaña al texto, no lo reemplaza.
 
+
+### Borrado automático de Cloudinary a los 30 días
+**Fuera de fase, 26-sep-2026.** Decisión de la usuaria. El contrato está en la
+sección 5 de CONSTRUIR-APP.md (*Borrado automático a los 30 días*); acá va el
+porqué. Ningún endpoint nuevo: cambian respuestas de los que ya existen.
+
+- **30 días desde la FECHA del evento, no desde el cierre.** Es una fecha que
+  se sabe desde que se crea el evento y que el panel puede anunciar siempre
+  (`fotos_se_borran_el`). Desde el cierre, un evento que nadie termina no se
+  borraría nunca.
+- **Fotos Y video, todo.** Aprobadas, pendientes y rechazadas, y todos los
+  videos (cada *Crear de nuevo* deja uno con otro public_id). Un borrado a
+  medias deja archivos que nadie ve y que ocupan cupo.
+- **La base no se toca.** "Nada se borra" es sobre las filas: quedan fotos,
+  estados, totales e historial. Lo único nuevo es `eventos.fotos_borradas_en`
+  (migración `0005_fotos_borradas`).
+- **Prefijo con barra final** (`eventos/{codigo}/`). Sin ella, `eventos/ab12`
+  es prefijo de `eventos/ab123...`, que es otro evento. Además
+  `prefijo_del_evento` rechaza un código vacío o con caracteres raros: nunca se
+  pide un borrado más ancho que una carpeta.
+- **Cierre automático.** Si seguía `activo` o `borrador`, pasa a `cerrado`: una
+  foto que entrara después quedaría en Cloudinary para siempre, porque el evento
+  ya figura borrado. Por lo mismo el `PATCH` no deja reabrirlo (409; cerrarlo
+  sí) y `_exigir_abierto` del invitado mira también
+  `fotos_borradas_en`. Consecuencia buscada por la especificación: un borrador
+  vencido pasa a `cerrado` y su código público deja de dar 404 para decir
+  "terminó".
+- **Si Cloudinary falla, no se marca y se reintenta.** Borrar lo que ya no está
+  responde 200, así que repetir un borrado a medias es seguro. Una falla de un
+  evento no frena a los demás de la misma pasada. El log lleva el código HTTP y
+  el principio de la respuesta, nunca el secreto.
+- **Paginado.** Cloudinary borra por prefijo de a mil y avisa con `next_cursor`
+  o `partial`. Se repite hasta que no avise más, con un tope de 100 vueltas
+  (cien mil archivos) para no quedar en un bucle si Cloudinary responde raro:
+  pasado el tope es una falla y se reintenta en la próxima pasada.
+- **Un evento por transacción, con `FOR NO KEY UPDATE SKIP LOCKED`.** Dos
+  pasadas a la vez se reparten los eventos sin repetir ninguno. De a uno para
+  que el lock dure lo que tarda un evento y un corte a mitad de pasada no pierda
+  lo hecho. `NO KEY` porque el alta de una foto necesita `FOR KEY SHARE` sobre
+  su evento (clave foránea), y `FOR UPDATE` a secas la dejaba esperando.
+- **Tarea del lifespan, no cron.** Render gratuito no tiene cron y duerme el
+  servicio: la pasada de ~60 s después de cada arranque es la que en la
+  práctica borra; la de cada 6 horas cubre un servicio que no se duerme. Corre
+  con `asyncio.to_thread` porque httpx y SQLAlchemy son sincrónicos.
+- **`LIMPIEZA_ACTIVA`.** Sin definir, sólo en producción. Nunca sin las tres
+  credenciales de Cloudinary. `tests/conftest.py` la pone en `false` antes de
+  importar la app, y las pruebas llaman a `pasada_de_limpieza` a mano con
+  `httpx.delete` simulado (un fixture automático hace fallar cualquier DELETE
+  real).
+- **`hoy_en_argentina` se mudó a `app/fechas.py`** para que la limpieza no
+  dependa de un router. `routers/admin.py` la importa con el mismo nombre, así
+  que las pruebas que la reemplazan en ese módulo siguen andando.
+- **OJO al desplegar:** la primera pasada después del deploy borra todo evento
+  con fecha de hace 30 días o más. No hay período de gracia.
+
 ---
 
 ## Pendientes de decidir

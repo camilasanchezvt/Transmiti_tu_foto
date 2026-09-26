@@ -15,6 +15,7 @@ from .. import vinculacion
 from ..database import get_db
 from ..deps import evento_por_token
 from ..errores import Codigo, ErrorApp
+from ..limpieza import archivos_vencidos
 from ..models import Evento, Foto
 from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido
 from ..schemas import (
@@ -45,12 +46,18 @@ _ERROR_404 = {404: {"model": RespuestaError, "description": "EVENTO_NO_ENCONTRAD
     summary="Configuración de la pantalla",
 )
 def obtener_pantalla(evento: Evento = Depends(evento_por_token)) -> Pantalla:
-    """Un evento `cerrado` sigue sirviendo la pantalla: las aprobadas terminan de pasar."""
+    """Un evento `cerrado` sigue sirviendo la pantalla: las aprobadas terminan de pasar.
+
+    Desde el día del borrado de sus archivos figura `cerrado` aunque la pasada
+    de limpieza todavía no lo haya cerrado: sus fotos ya no se sirven (ver
+    obtener_fotos), así que la pantalla muestra el cierre y no un QR que invita
+    a mandar fotos que se borrarían enseguida.
+    """
     return Pantalla(
         evento=PantallaEvento(
             nombre=evento.nombre,
             codigo_publico=evento.codigo_publico,
-            estado=evento.estado,
+            estado="cerrado" if archivos_vencidos(evento) else evento.estado,
         ),
         config=PantallaConfig(
             segundos_por_foto=evento.segundos_por_foto,
@@ -81,7 +88,15 @@ def obtener_fotos(
     - `desde=N`: las aprobadas con id > N, ascendente. Es el polling normal.
 
     Las dos consultas pegan contra idx_fotos_pantalla (evento_id, estado, id).
+
+    Si las fotos del evento ya se borraron de Cloudinary (a los 30 días de su
+    fecha), la lista sale vacía: las filas siguen, pero sus URLs ya no cargan.
+    También desde el día del borrado aunque la pasada todavía no haya corrido o
+    haya fallado a mitad: esas URLs pueden estar muertas.
     """
+    if archivos_vencidos(evento):
+        return ColaPantalla(fotos=[], ultimo_id=desde)
+
     base = select(Foto).where(Foto.evento_id == evento.id, Foto.estado == "aprobada")
 
     if desde == 0:

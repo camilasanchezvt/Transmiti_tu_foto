@@ -9,6 +9,13 @@ borra y recrea las tablas en cada corrida.
 from __future__ import annotations
 
 import os
+
+# Antes de importar la app: la configuración se lee una sola vez. En las pruebas
+# la limpieza de Cloudinary no arranca nunca en segundo plano, aunque la máquina
+# tenga ENTORNO=produccion o credenciales cargadas. Las pruebas de limpieza la
+# llaman a mano, con Cloudinary simulado (test_limpieza.py).
+os.environ["LIMPIEZA_ACTIVA"] = "false"
+
 from datetime import date
 from functools import lru_cache
 
@@ -47,6 +54,22 @@ def hash_de(password: str) -> str:
     sumaba medio minuto a la corrida; la misma contraseña da un hash que valida
     igual, así que se calcula una vez."""
     return hashear_password(password)
+
+
+# El "hoy" del borrado a los 30 días en todas las pruebas. `limpieza.hoy_en_argentina`
+# es el único reloj del borrado (descarga, video, pantalla, reabrir, crear), y
+# los eventos del fixture `eventos` son del 12/9/2026: con el reloj de verdad,
+# desde el 12/10/2026 esas pruebas darían 410 y un "2026-12-01" fijo no se
+# podría crear desde el 31/12. Con el reloj fijo, la corrida no depende del día.
+# Las pruebas del borrado fijan el suyo encima (monkeypatch pisa a éste).
+HOY_DEL_BORRADO = date(2026, 9, 26)
+
+
+@pytest.fixture(autouse=True)
+def _reloj_del_borrado(monkeypatch):
+    from app import limpieza
+
+    monkeypatch.setattr(limpieza, "hoy_en_argentina", lambda: HOY_DEL_BORRADO)
 
 
 @pytest.fixture(autouse=True)

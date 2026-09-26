@@ -67,6 +67,13 @@ export class ErrorApi extends Error {
   get esSinPermiso(): boolean {
     return this.http === 403;
   }
+
+  /** 410: las fotos y el video del evento ya se borraron de Cloudinary (a los
+   *  30 días de la fecha). Lo responden la descarga y el video; el mensaje del
+   *  backend ya lo dice, pero así la página puede dejar de ofrecerlos. */
+  get esFotosBorradas(): boolean {
+    return this.http === 410;
+  }
 }
 
 let tokenAdmin: string | null = leerTokenGuardado();
@@ -273,6 +280,8 @@ export const admin = {
       conAuth: true,
     }),
 
+  /** GET y POST del video. Con las fotos ya borradas responden 410
+   *  (ErrorApi.esFotosBorradas). */
   video: (id: number) =>
     pedir<VideoEvento>(`/api/admin/eventos/${id}/video`, { conAuth: true }),
 
@@ -324,7 +333,8 @@ export const admin = {
       conAuth: true,
     }),
 
-  /** La descarga no pasa por `pedir`: es un ZIP, no JSON, y puede tardar. */
+  /** La descarga no pasa por `pedir`: es un ZIP, no JSON, y puede tardar.
+   *  Con las fotos ya borradas responde 410 (ErrorApi.esFotosBorradas). */
   urlDescarga: (id: number, incluir: "aprobadas" | "todas") =>
     `${BASE}/api/admin/eventos/${id}/descarga?incluir=${incluir}`,
 

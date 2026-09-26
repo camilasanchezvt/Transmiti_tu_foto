@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { ExclamationTriangleIcon, TvIcon } from "@heroicons/react/24/outline";
 
 import { ErrorApi, pantalla } from "../api/client";
 import { textos } from "./textos";
@@ -54,7 +55,12 @@ export default function PaginaVincular({ onVinculada }: Props) {
 
   return (
     <main className="flex min-h-full flex-col items-center justify-center gap-6 p-4 text-center sm:gap-8 sm:p-8">
-      <div>
+      <div className="flex flex-col items-center">
+        {/* La tele dibujada dice qué se conecta antes de leer el título: quien
+            abrió /p en el celular por error se da cuenta de un vistazo. No más
+            grande: en una tele de 1280×720 con el error a la vista, un ícono
+            de 80 px ya hace scroll. */}
+        <TvIcon aria-hidden className="mb-3 h-12 w-12 shrink-0 text-acento sm:h-14 sm:w-14" />
         <h1 className="text-3xl font-semibold leading-tight sm:text-5xl">{t.titulo}</h1>
         <p className="mx-auto mt-3 max-w-2xl text-lg leading-snug text-tenue sm:text-2xl">
           {t.instrucciones}
@@ -89,8 +95,13 @@ export default function PaginaVincular({ onVinculada }: Props) {
 
       {/* role="alert": se anuncia aunque el foco siga en el campo. */}
       {error && (
-        <p role="alert" className="max-w-xl text-lg leading-snug text-naranja sm:text-2xl">
-          {error}
+        <p
+          role="alert"
+          className="flex max-w-xl items-start gap-2 text-left text-lg leading-snug text-naranja sm:gap-3 sm:text-2xl"
+        >
+          {/* Alineado a la primera línea: el mensaje puede ocupar dos. */}
+          <ExclamationTriangleIcon aria-hidden className="mt-0.5 h-6 w-6 shrink-0 sm:h-8 sm:w-8" />
+          <span>{error}</span>
         </p>
       )}
 

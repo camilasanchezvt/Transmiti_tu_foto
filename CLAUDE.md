@@ -11,6 +11,8 @@ Backend: Python 3.12, FastAPI, SQLAlchemy 2.0, Alembic, Pydantic v2.
 Base: PostgreSQL en Supabase, usado SOLO como base de datos.
 Imágenes: Cloudinary con subida firmada desde el navegador.
 Frontend: React 18, Vite, TypeScript, Tailwind, React Router.
+Íconos: @heroicons/react (v2) autorizado para toda la iconografía, por pedido
+de la usuaria. Nada de SVG escritos a mano ni otra librería de íconos.
 Deploy: Render.
 
 ## Reglas que no se rompen

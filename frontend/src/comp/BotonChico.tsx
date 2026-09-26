@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
 import { comun } from "../admin/textos/comun";
+import { claseIconoChico, type Icono } from "./icono";
 
 export type VarianteChica = "vidrio" | "azul" | "peligro";
 
@@ -15,6 +16,13 @@ const ESTILOS: Record<VarianteChica, string> = {
  * a un <a> de descarga sin envolverlos en un <button>.
  *
  *   <Link to="…" className={claseBotonChico("vidrio")}>Ajustes</Link>
+ *
+ * Con ícono, el link lo lleva adentro con las mismas clases del botón:
+ *
+ *   <a href={url} download className={claseBotonChico("vidrio")}>
+ *     <ArrowDownTrayIcon aria-hidden className={claseIconoChico} />
+ *     {textos.descargarVideo}
+ *   </a>
  */
 export function claseBotonChico(variante: VarianteChica = "vidrio"): string {
   return (
@@ -31,6 +39,12 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variante?: VarianteChica;
   /** Deshabilita y muestra "Esperá…", igual que el botón grande. */
   cargando?: boolean;
+  /**
+   * Un ícono de heroicons a la izquierda del texto, pasado como componente:
+   * icono={ClipboardDocumentIcon}, del juego mini (@heroicons/react/20/solid).
+   * Es decorativo (aria-hidden): el texto sigue siendo obligatorio.
+   */
+  icono?: Icono;
   children: ReactNode;
 }
 
@@ -38,6 +52,7 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 export default function BotonChico({
   variante = "vidrio",
   cargando = false,
+  icono: IconoBoton,
   disabled,
   className = "",
   type = "button",
@@ -53,6 +68,8 @@ export default function BotonChico({
       disabled={disabled || cargando}
       className={`${claseBotonChico(variante)} ${className}`}
     >
+      {/* Mientras carga no va el ícono: "Esperá…" no es la acción. */}
+      {IconoBoton && !cargando && <IconoBoton aria-hidden className={claseIconoChico} />}
       {cargando ? comun.esperar : children}
     </button>
   );

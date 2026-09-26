@@ -12,7 +12,7 @@ Las cuentas (listar, habilitar, dar de baja) están en routers/cuentas.py.
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Literal
 
@@ -34,6 +34,8 @@ from ..cloudinary_service import (
 from ..database import get_db
 from ..deps import es_admin, evento_del_usuario, usuario_actual
 from ..errores import Codigo, ErrorApp
+from ..fechas import hoy_en_argentina
+from ..limpieza import archivos_vencidos, fecha_vencida, fotos_se_borran_el
 from ..models import Evento, Foto, Usuario
 from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido_en_todas
 from ..schemas import (
@@ -73,6 +75,8 @@ protegido = APIRouter(
 _ERROR_404_EVENTO = {404: {"model": RespuestaError, "description": "EVENTO_NO_ENCONTRADO"}}
 _ERROR_404_FOTO = {404: {"model": RespuestaError, "description": "FOTO_NO_ENCONTRADA"}}
 _ERROR_403 = {403: {"model": RespuestaError, "description": "NO_AUTORIZADO"}}
+_ERROR_410 = {410: {"model": RespuestaError,
+                    "description": "DATOS_INVALIDOS: las fotos y el video ya se borraron"}}
 
 _SIN_PERMISO = "No tenés permiso para esto"
 
@@ -188,7 +192,13 @@ def _contar(db: Session, ids_evento: list[int]) -> dict[int, dict[str, int]]:
 
 def _como_admin(evento: Evento, totales: dict[str, int]) -> EventoAdmin:
     """El dueño sale de `evento.usuario`. El listado lo trae en la misma consulta
-    con joinedload; en los endpoints de un solo evento es una consulta más."""
+    con joinedload; en los endpoints de un solo evento es una consulta más.
+
+    `video_url_listo` sale de la misma fila: el panel puede ofrecer descargar
+    el video desde la lista sin preguntarle nada a Cloudinary. Desde el día del
+    borrado es null aunque la pasada todavía no haya corrido (mismo criterio
+    que `_exigir_archivos`): el link llevaría a un video que se está borrando."""
+    vencidos = archivos_vencidos(evento)
     return EventoAdmin(
         id=evento.id,
         nombre=evento.nombre,
@@ -201,19 +211,32 @@ def _como_admin(evento: Evento, totales: dict[str, int]) -> EventoAdmin:
         **totales,
         organizador_id=evento.usuario_id,
         organizador_nombre=evento.usuario.nombre,
+        fotos_se_borran_el=fotos_se_borran_el(evento.fecha_evento),
+        fotos_borradas_en=evento.fotos_borradas_en,
+        video_url_listo=(
+            evento.video_url if evento.video_estado == "listo" and not vencidos else None
+        ),
     )
 
 
-# Zona fija UTC-3 y no zoneinfo: en Windows zoneinfo no trae la base de zonas y
-# rompe las pruebas, y Argentina no tiene horario de verano desde 2009.
-_ARGENTINA = timezone(timedelta(hours=-3))
+# Las fotos y el video de un evento se borran de Cloudinary a los 30 días de su
+# fecha (app/limpieza.py). Desde ese día, lo que necesita los archivos responde
+# 410, se hayan borrado ya o todavía no.
+_YA_SE_BORRARON = "Las fotos y el video de este evento ya se borraron"
+_SE_ESTAN_BORRANDO = "Las fotos y el video de este evento se están borrando"
 
 
-def hoy_en_argentina() -> date:
-    """El servidor está en UTC: a las 22 h de un sábado en Buenos Aires ya es
-    domingo en el servidor, y un evento de esa noche que todavía no se publicó
-    pasaría al historial antes de tiempo."""
-    return datetime.now(_ARGENTINA).date()
+def _exigir_archivos(evento: Evento) -> None:
+    """410 y no 404: el evento existe, lo que ya no existe son sus archivos.
+
+    El corte es la FECHA del borrado, no sólo `fotos_borradas_en`: ese día la
+    pasada puede correr en cualquier momento (en Render gratuito, un minuto
+    después de que la organizadora despierta la API entrando a descargar), y
+    una descarga en curso quedaba a medias sin que nadie se enterara."""
+    if evento.fotos_borradas_en is not None:
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _YA_SE_BORRARON, http=410)
+    if fecha_vencida(evento.fecha_evento):
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _SE_ESTAN_BORRANDO, http=410)
 
 
 @protegido.get("/eventos", response_model=list[EventoAdmin], summary="Listar eventos")
@@ -274,6 +297,10 @@ def listar_eventos(
     return [_como_admin(e, totales[e.id]) for e in eventos]
 
 
+# Lo lee quien organiza, en el formulario de Crear evento (ver crear_evento).
+_FECHA_VENCIDA = "Esa fecha ya pasó hace 30 días o más. Revisá el año"
+
+
 def _dueno_del_evento_nuevo(nuevo: EventoNuevo, db: Session, usuario: Usuario) -> Usuario:
     """Sin `organizador_id`, o con el propio, el dueño es quien lo crea."""
     if nuevo.organizador_id is None or nuevo.organizador_id == usuario.id:
@@ -292,7 +319,11 @@ def _dueno_del_evento_nuevo(nuevo: EventoNuevo, db: Session, usuario: Usuario) -
     "/eventos",
     response_model=EventoAdmin,
     status_code=201,
-    responses={**_ERROR_403, 422: {"model": RespuestaError, "description": "DATOS_INVALIDOS"}},
+    responses={
+        **_ERROR_403,
+        422: {"model": RespuestaError,
+              "description": "DATOS_INVALIDOS (también una fecha de hace 30 días o más)"},
+    },
     summary="Crear evento",
 )
 def crear_evento(
@@ -304,10 +335,18 @@ def crear_evento(
 
     Un admin puede crearlo a nombre de otra cuenta activa con `organizador_id`.
 
+    Una fecha de hace 30 días o más se rechaza: sus archivos ya estarían
+    vencidos, y la próxima pasada de limpieza lo cerraría y lo borraría sin
+    dejar reabrirlo (la fecha no se puede cambiar después). Casi siempre es el
+    año mal puesto. Una fecha de hace menos sí vale: sirve para juntar las
+    fotos de una fiesta que ya pasó.
+
     El UNIQUE de la base es la última palabra sobre las colisiones: si dos
     eventos se crean a la vez y sacan la misma clave, una de las dos inserciones
     falla y se reintenta con claves nuevas.
     """
+    if fecha_vencida(nuevo.fecha_evento):
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _FECHA_VENCIDA)
     dueno = _dueno_del_evento_nuevo(nuevo, db, usuario)
     for _ in range(5):
         evento = Evento(
@@ -332,7 +371,12 @@ def crear_evento(
 @protegido.patch(
     "/eventos/{id_evento}",
     response_model=EventoAdmin,
-    responses={**_ERROR_404_EVENTO},
+    responses={
+        **_ERROR_404_EVENTO,
+        409: {"model": RespuestaError,
+              "description": "DATOS_INVALIDOS: no se reabre un evento con las fotos borradas "
+                             "o que se están borrando"},
+    },
     summary="Cambiar el estado o la configuración de un evento",
 )
 def cambiar_estado_evento(
@@ -345,11 +389,25 @@ def cambiar_estado_evento(
 
     Los segundos por foto le llegan a la pantalla en su próxima pasada de
     polling, sin recargarla.
+
+    Un evento con las fotos ya borradas de Cloudinary no se reabre (409): los
+    invitados subirían fotos a una carpeta que ya se limpió y que nadie va a
+    volver a limpiar, y la pantalla no tendría nada que mostrar. Tampoco desde
+    el día del borrado, aunque la pasada todavía no haya corrido: la pasada lo
+    cerraría enseguida y borraría lo que llegara.
     """
     evento = evento_del_usuario(id_evento, db, usuario)
     cambio_algo = False
 
     if cambio.estado is not None and cambio.estado != evento.estado:
+        if archivos_vencidos(evento) and cambio.estado != "cerrado":
+            raise ErrorApp(
+                Codigo.DATOS_INVALIDOS,
+                "Las fotos de este evento ya se borraron: no se puede reabrir"
+                if evento.fotos_borradas_en is not None
+                else "Las fotos de este evento se están borrando: no se puede reabrir",
+                http=409,
+            )
         evento.estado = cambio.estado
         # Se sella cuándo se cerró; si se reabre, se borra la marca.
         evento.cerrado_en = datetime.now(timezone.utc) if cambio.estado == "cerrado" else None
@@ -556,7 +614,7 @@ def _como_video(evento: Evento) -> VideoEvento:
 @protegido.get(
     "/eventos/{id_evento}/video",
     response_model=VideoEvento,
-    responses={**_ERROR_404_EVENTO},
+    responses={**_ERROR_404_EVENTO, **_ERROR_410},
     summary="Estado del video del evento",
 )
 def ver_video(
@@ -564,8 +622,12 @@ def ver_video(
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(usuario_actual),
 ) -> VideoEvento:
-    """Mientras está `procesando`, cada consulta le pregunta a Cloudinary."""
+    """Mientras está `procesando`, cada consulta le pregunta a Cloudinary.
+
+    Con los archivos ya borrados, o desde el día del borrado, 410: el video
+    tampoco existe más."""
     evento = evento_del_usuario(id_evento, db, usuario)
+    _exigir_archivos(evento)
 
     if evento.video_estado == "procesando" and evento.video_public_id:
         url = consultar_video(evento.video_public_id)
@@ -585,7 +647,11 @@ def ver_video(
     "/eventos/{id_evento}/video",
     response_model=VideoEvento,
     status_code=202,
-    responses={**_ERROR_404_EVENTO, 422: {"model": RespuestaError, "description": "DATOS_INVALIDOS"}},
+    responses={
+        **_ERROR_404_EVENTO,
+        **_ERROR_410,
+        422: {"model": RespuestaError, "description": "DATOS_INVALIDOS"},
+    },
     summary="Armar el video del evento",
 )
 def armar_video(
@@ -597,8 +663,12 @@ def armar_video(
 
     Si ya hay uno en proceso, no se pide otro: devuelve el que está en curso.
     Así un doble clic no gasta créditos de Cloudinary dos veces.
+
+    Con los archivos ya borrados, o desde el día del borrado, 410: no quedan
+    fotos con qué armarlo.
     """
     evento = evento_del_usuario(id_evento, db, usuario)
+    _exigir_archivos(evento)
 
     en_curso = (
         evento.video_estado == "procesando"
@@ -639,7 +709,7 @@ def armar_video(
 
 @protegido.get(
     "/eventos/{id_evento}/descarga",
-    responses={**_ERROR_404_EVENTO, 200: {"content": {"application/zip": {}}}},
+    responses={**_ERROR_404_EVENTO, **_ERROR_410, 200: {"content": {"application/zip": {}}}},
     summary="Descargar las fotos en un ZIP",
 )
 def descargar(
@@ -657,8 +727,13 @@ def descargar(
     Las filas se leen ANTES de empezar a mandar: la sesión de base se cierra
     cuando termina de resolverse la respuesta, y el generador sigue corriendo
     después. Si consultara adentro, lo haría sobre una sesión ya cerrada.
+
+    Con los archivos ya borrados de Cloudinary, 410: el ZIP saldría vacío. Lo
+    mismo desde el día del borrado (ver `_exigir_archivos`). Si igual falta
+    alguna foto (Cloudinary no la dio), el ZIP lo dice adentro: ver armar_zip.
     """
     evento = evento_del_usuario(id_evento, db, usuario)
+    _exigir_archivos(evento)
 
     consulta = select(Foto.nombre_invitado, Foto.url).where(Foto.evento_id == evento.id)
     if incluir == "aprobadas":

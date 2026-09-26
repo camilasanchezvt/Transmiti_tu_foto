@@ -77,7 +77,9 @@ transmiti-tu-foto/
 │   │   ├── deps.py              # usuario_actual, solo_admin, es_admin, es_superadmin, evento_del_usuario, evento_por_codigo, evento_por_token
 │   │   ├── errores.py           # ErrorApp y códigos
 │   │   ├── ratelimit.py         # límite de pedidos en memoria (por IP, evento y celular)
-│   │   ├── cloudinary_service.py# firma y armado del ZIP
+│   │   ├── cloudinary_service.py# firma, ZIP, video y borrado por prefijo
+│   │   ├── limpieza.py          # borrado de Cloudinary a los 30 días, en segundo plano
+│   │   ├── fechas.py            # hoy en Argentina (UTC−3 fijo)
 │   │   └── routers/
 │   │       ├── publico.py       # /api/e/*
 │   │       ├── pantalla.py      # /api/pantalla/*
@@ -174,7 +176,10 @@ CREATE TABLE eventos (
   video_public_id text,
   video_url       text,
   video_fotos     int,
-  video_pedido_en timestamptz
+  video_pedido_en timestamptz,
+  -- A los 30 días de fecha_evento se borran de Cloudinary todas las fotos y
+  -- todos los videos del evento. Las filas quedan; esto marca cuándo se borraron.
+  fotos_borradas_en timestamptz
 );
 
 CREATE TABLE fotos (
@@ -224,6 +229,7 @@ Los dos se generan con `secrets.token_urlsafe`, nunca a partir del id ni de la f
 - Nada se borra: una foto rechazada sigue existiendo y se puede revertir. Una cuenta tampoco: se da de baja, y sus eventos y fotos quedan.
 - `usuarios` empezó llamándose `administradores`; la migración `0003_usuarios_y_roles` la renombró, le agregó `rol` y `estado`, y pasó `eventos.admin_id` a `usuario_id`. Las cuentas que ya existían quedaron `admin` y `activa`.
 - La migración `0004_superadmin` sólo amplía el `CHECK` de `rol` con `superadmin`. No promueve a nadie: el superadmin se nombra a mano (ver *Nombrar un superadmin* en la sección 5). Su downgrade vuelve a `admin` a los superadmin antes de restaurar el `CHECK` viejo.
+- La migración `0005_fotos_borradas` agrega `eventos.fotos_borradas_en` (`timestamptz`, nula). No borra nada: de Cloudinary se encarga la limpieza en segundo plano (*Borrado automático a los 30 días*, en la sección 5). Su downgrade sólo saca la columna; lo que ya se borró en Cloudinary no vuelve.
 
 ---
 
@@ -306,6 +312,8 @@ Devuelve **sólo fotos aprobadas**. Dos comportamientos:
 
 `ultimo_id` es el mayor id devuelto, o el `desde` recibido si no vino nada.
 
+Desde el día del borrado de Cloudinary (*Borrado automático a los 30 días*, al final de esta sección), se hayan borrado ya o todavía no, devuelve la lista vacía y `ultimo_id` igual al `desde`: las filas siguen, pero sus URLs ya no cargan. Ese mismo día `GET /api/pantalla/{token}` ya dice `cerrado`, aunque la limpieza todavía no lo haya cerrado.
+
 **`POST /api/pantalla/canjear`** — sin auth
 ```json
 body → { "codigo": "394 812" }
@@ -320,17 +328,17 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 |---|---|---|
 | `POST /api/admin/login` | `{email, password}` — sin auth | `{token, expira_en}`. Email inexistente, contraseña incorrecta o cuenta `pendiente` (aun con la contraseña correcta) → 401 `NO_AUTORIZADO`, con el mismo mensaje para los tres: el registro deja elegir la contraseña de un email nuevo, y un mensaje propio para la pendiente delataría qué emails ya existían. Contraseña correcta de una cuenta `baja` → 403 `NO_AUTORIZADO`. 429 → `DEMASIADOS_PEDIDOS`: 10 intentos cada 10 minutos por IP y 20 por email, contados antes de buscar la cuenta |
 | `GET /api/admin/yo` | — | `{id, email, nombre, rol}` de la sesión. `rol`: `superadmin`, `admin` u `organizador` |
-| `GET /api/admin/eventos` | query opcional: `alcance=vigentes\|historial`, `organizador={id}` | lista con `{id, nombre, fecha_evento, estado, codigo_publico, token_pantalla, segundos_por_foto, max_fotos_por_dispositivo, pendientes, aprobadas, rechazadas, organizador_id, organizador_nombre}`. Un admin o un superadmin ve todos; un organizador, sólo los suyos. Regla de medianoche: `vigentes` son los `activo` de cualquier fecha más los `borrador` con fecha de hoy en adelante, del más próximo al más lejano (un abierto de ayer queda primero); `historial`, los `cerrado` de cualquier fecha más los `borrador` de fecha pasada, del más reciente al más viejo. "Hoy" es el de Argentina (UTC−3 fijo). Sin `alcance`, todos por fecha descendente. `organizador` sólo lo respetan un admin y un superadmin |
-| `POST /api/admin/eventos` | `{nombre, fecha_evento, organizador_id?}` | el evento creado, con sus dos claves y su dueño. Sin `organizador_id`, el dueño es quien lo crea. Un admin puede crearlo para otra cuenta activa (si no existe o no está activa → `DATOS_INVALIDOS`); un organizador que manda otro id → 403 `NO_AUTORIZADO` |
-| `PATCH /api/admin/eventos/{id}` | `{estado?, segundos_por_foto?, max_fotos_por_dispositivo?}`, al menos uno. Segundos entre 3 y 30; fotos por invitado entre 1 y 50 | el evento actualizado |
+| `GET /api/admin/eventos` | query opcional: `alcance=vigentes\|historial`, `organizador={id}` | lista con `{id, nombre, fecha_evento, estado, codigo_publico, token_pantalla, segundos_por_foto, max_fotos_por_dispositivo, pendientes, aprobadas, rechazadas, organizador_id, organizador_nombre, fotos_se_borran_el, fotos_borradas_en, video_url_listo}`. `fotos_se_borran_el` es `fecha_evento` + 30 días (`YYYY-MM-DD`); `fotos_borradas_en`, cuándo se borraron de Cloudinary las fotos y los videos, o `null`; `video_url_listo`, la URL del último video si está `listo` y todavía no es el día del borrado (ni se borraron), si no `null`. Crear y cambiar un evento responden con esta misma forma. Un admin o un superadmin ve todos; un organizador, sólo los suyos. Regla de medianoche: `vigentes` son los `activo` de cualquier fecha más los `borrador` con fecha de hoy en adelante, del más próximo al más lejano (un abierto de ayer queda primero); `historial`, los `cerrado` de cualquier fecha más los `borrador` de fecha pasada, del más reciente al más viejo. "Hoy" es el de Argentina (UTC−3 fijo). Sin `alcance`, todos por fecha descendente. `organizador` sólo lo respetan un admin y un superadmin |
+| `POST /api/admin/eventos` | `{nombre, fecha_evento, organizador_id?}` | el evento creado, con sus dos claves y su dueño. Sin `organizador_id`, el dueño es quien lo crea. Un admin puede crearlo para otra cuenta activa (si no existe o no está activa → `DATOS_INVALIDOS`); un organizador que manda otro id → 403 `NO_AUTORIZADO`. Una `fecha_evento` de hace 30 días o más ("hoy" de Argentina) → 422 `DATOS_INVALIDOS` "Esa fecha ya pasó hace 30 días o más. Revisá el año": nacería con las fotos vencidas, la próxima limpieza lo cerraría sin dejar reabrirlo y la fecha no se cambia después. Casi siempre es el año mal puesto. De hace menos, sí: sirve para juntar las fotos de una fiesta que ya pasó |
+| `PATCH /api/admin/eventos/{id}` | `{estado?, segundos_por_foto?, max_fotos_por_dispositivo?}`, al menos uno. Segundos entre 3 y 30; fotos por invitado entre 1 y 50 | el evento actualizado. Reabrir (`activo` o `borrador`) un evento con las fotos ya borradas, o desde el día del borrado aunque la limpieza no haya pasado → 409 `DATOS_INVALIDOS`; cerrarlo y cambiar lo demás, sí |
 | `GET /api/admin/eventos/{id}/fotos` | query: `estado`, `desde`, `limite` | `{fotos: [...], ultimo_id}` |
 | `GET /api/admin/eventos/{id}/resumen` | — | `{pendientes, aprobadas, rechazadas}` |
 | `PATCH /api/admin/fotos/{id}` | `{estado}` | `{id, estado}` |
 | `POST /api/admin/fotos/lote` | `{ids: [], estado}` | `{afectadas: 12}`. Para un organizador, los ids de eventos ajenos se ignoran |
 | `POST /api/admin/eventos/{id}/vincular` | — | `{codigo, expira_en}`: seis dígitos para `POST /api/pantalla/canjear`. Generar uno invalida el anterior. Un `borrador` → `EVENTO_BORRADOR` |
-| `GET /api/admin/eventos/{id}/descarga` | query: `incluir=aprobadas\|todas` | archivo ZIP |
-| `POST /api/admin/eventos/{id}/video` | — | 202 `{estado, url, fotos, pedido_en}`. Pide a Cloudinary (`create_slideshow`) un video 1280×720 con las aprobadas, 3 s cada una, hasta 150 repartidas en la noche. Si ya hay uno en proceso, devuelve ese. Sin aprobadas → `DATOS_INVALIDOS` |
-| `GET /api/admin/eventos/{id}/video` | — | `{estado: ninguno\|procesando\|listo\|fallo, url, fotos, pedido_en}`. Mientras está `procesando` le pregunta a Cloudinary; a los 30 min sin terminar pasa a `fallo` |
+| `GET /api/admin/eventos/{id}/descarga` | query: `incluir=aprobadas\|todas` | archivo ZIP. Desde el día del borrado (se hayan borrado ya o no) → 410 `DATOS_INVALIDOS`. Si alguna foto no se pudo bajar de Cloudinary, el ZIP lleva adentro `000 - FALTAN FOTOS.txt` con cuántas y cuáles: la respuesta ya salió con 200 (es streaming) y es la única forma de que un ZIP incompleto no parezca completo |
+| `POST /api/admin/eventos/{id}/video` | — | 202 `{estado, url, fotos, pedido_en}`. Pide a Cloudinary (`create_slideshow`) un video 1280×720 con las aprobadas, 3 s cada una, hasta 150 repartidas en la noche. Si ya hay uno en proceso, devuelve ese. Sin aprobadas → `DATOS_INVALIDOS`. Desde el día del borrado → 410 `DATOS_INVALIDOS` |
+| `GET /api/admin/eventos/{id}/video` | — | `{estado: ninguno\|procesando\|listo\|fallo, url, fotos, pedido_en}`. Mientras está `procesando` le pregunta a Cloudinary; a los 30 min sin terminar pasa a `fallo`. Desde el día del borrado → 410 `DATOS_INVALIDOS` |
 | `GET /api/admin/cuentas` | — admin o superadmin — | lista con `{id, email, nombre, rol, estado, creado_en, eventos, ultimo_evento}`, superadmins incluidos: `eventos` es cuántos tiene y `ultimo_evento` la fecha del más reciente, o `null`. Pendientes primero (las más nuevas arriba), después activas y al final las de baja, cada grupo por nombre |
 | `PATCH /api/admin/cuentas/{id}` | admin o superadmin. `{estado?: activa\|baja, rol?: admin\|organizador, nombre?}`, al menos uno | la cuenta, con la forma del listado. Idempotente. `pendiente` no es un valor aceptado. Quién puede cambiar qué cuenta, en la matriz de abajo. Id inexistente → `DATOS_INVALIDOS` 404 |
 | `GET /api/salud` | — sin auth — | `{estado, base}` |
@@ -343,6 +351,7 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 - El límite por dispositivo se cuenta contra `dispositivo_hash`, sin pedirle datos al invitado.
 - Sólo imágenes: `image/jpeg`, `image/png`, `image/webp`, `image/heic`. Nada de video.
 - Una foto pertenece a un solo evento y no se puede mover.
+- **A los 30 días de la fecha del evento se borran de Cloudinary todas sus fotos y todos sus videos.** Las filas quedan, y el evento se cierra si seguía abierto. Desde ese día, aunque la limpieza todavía no haya pasado, nada ofrece ni sirve los archivos. Ver *Borrado automático a los 30 días*, al final de esta sección.
 - El endpoint de firma tiene dos topes de pedidos, cada 10 minutos y por evento: 30 por celular (IP + `dispositivo_hash`) y 600 por conexión (IP). Ver `POST /api/e/{codigo_publico}/firma`. El registro de fotos lleva los mismos dos, aparte.
 - **La IP de los topes** sale de una sola función, `ratelimit.ip_del_pedido`, y **nunca es el primer valor de `X-Forwarded-For`**: ése lo escribe quien manda el pedido, y con uno inventado por pedido se evadían todos los topes (el canje de seis dígitos se podía probar por fuerza bruta). En orden: `CF-Connecting-IP` (lo pone Cloudflare, que está delante de Render, y pisa el del cliente); si no viene, el **último** valor de `X-Forwarded-For` (lo agrega el proxy); si tampoco, la IP de la conexión. El primer pedido de cada arranque deja una línea en el log con qué cabeceras llegaron (sin las IPs): después del primer deploy, y de cualquier cambio de infraestructura, confirmar ahí que dice `cf-connecting-ip=sí`.
 - **Roles.** Tres: `superadmin`, `admin` y `organizador`. `superadmin` es la dueña de la app: puede todo lo que puede un admin y además gestiona a los admins. `admin` ve y gestiona todos los eventos, ve todas las cuentas y gestiona las de organizador. `organizador` ve sólo sus eventos. Para todo lo que no son cuentas, un superadmin es un admin más. Un evento o una foto de otra cuenta responden 404 (`EVENTO_NO_ENCONTRADO`, `FOTO_NO_ENCONTRADA`), igual que si no existieran: un 403 confirmaría que existen. Un organizador en un endpoint sólo de admin recibe 403 `NO_AUTORIZADO`.
@@ -372,6 +381,28 @@ WHERE email = 'duena@ejemplo.com';
 ```
 
 El email de arriba es de ejemplo. El real no se escribe en el código ni en la documentación: el repositorio es público. Si la cuenta todavía no existe, `backend/crear_admin.py` imprime el `INSERT` de una cuenta nueva y pregunta el rol (`superadmin` por defecto, o `admin`). Para sacarle el rol, lo mismo con `rol = 'admin'`.
+
+**Borrado automático a los 30 días.** Decisión de la usuaria: Cloudinary no es un archivo permanente. Las fotos y el video se descargan desde Ajustes antes de esa fecha.
+
+- **Qué:** todas las fotos del evento (aprobadas, pendientes y rechazadas) y todos sus videos (cada *Crear de nuevo* deja uno). Las filas de `fotos` y de `eventos` **no** se borran: la regla *nada se borra* es sobre la base.
+- **Cuándo:** `fotos_se_borran_el` = `fecha_evento` + 30 días, contados desde la fecha del evento y no desde el cierre. Se borra en la primera pasada con hoy ≥ esa fecha ("hoy" de Argentina, UTC−3 fijo, como la regla de medianoche).
+- **Cómo:** `app/limpieza.py`. Una tarea en segundo plano del lifespan de `main.py` corre una pasada unos 60 s después de arrancar, sin frenar el arranque ni el health check, y después cada 6 horas, en un thread (httpx y SQLAlchemy son sincrónicos). Por cada evento vencido pide a la Admin API de Cloudinary, con basic auth `api_key`/`api_secret`, `DELETE /resources/image/upload` y `DELETE /resources/video/upload` con `prefix=eventos/{codigo_publico}/` —**con la barra final**: sin ella, `eventos/ab12` borraría también `eventos/ab123…`— e `invalidate=true`, y repite mientras la respuesta traiga `next_cursor` o `partial: true` (Cloudinary borra de a mil).
+- **Después:** `fotos_borradas_en` = ahora y, si el evento estaba `activo` o `borrador`, pasa a `cerrado` con `cerrado_en` = ahora: nadie puede subir una foto que ya no se va a borrar. `video_estado` queda como estaba.
+- **Desde el día, no desde la pasada.** El backend corta por la fecha (`limpieza.archivos_vencidos`: `fotos_borradas_en` puesto **o** hoy ≥ `fotos_se_borran_el`), no sólo por la marca. La pasada corre en cualquier momento de ese día —en Render gratuito, un minuto después de que alguien despierta la API, que suele ser la organizadora entrando a descargar— y borraba en plena descarga: el ZIP salía incompleto, o vacío, con 200 y sin avisar. Lo mismo si Cloudinary fallaba a mitad (imágenes borradas, videos no): el evento quedaba sin marcar hasta la pasada siguiente. Con el corte por fecha ese día ya no hay nada que ofrecer, y el panel dice *Las fotos y el video se están borrando*. El corte es exactamente el de la pasada (`fecha_evento` + 30 ≤ hoy), con el mismo "hoy".
+- **Si Cloudinary falla** (red o HTTP ≥ 400), el evento no se marca ni se cierra, y la próxima pasada lo reintenta. Borrar lo que ya no está no es error, así que reintentar un borrado a medias es seguro. El error va al log, sin el secreto. La pasada nunca tira abajo la API.
+- **Dos pasadas a la vez** (dos workers, o dos arranques pisados) no borran el mismo evento dos veces: cada uno se toma con `FOR NO KEY UPDATE SKIP LOCKED`, de a uno por transacción. `NO KEY` para no frenar el alta de una foto de ese evento.
+- **Cuándo corre:** sólo en producción y con las tres credenciales de Cloudinary. `LIMPIEZA_ACTIVA` (sección 9) lo fuerza a `true` o `false`; las pruebas lo apagan. Al arrancar deja en el log `limpieza: activa, …`; en producción y apagada, una advertencia `limpieza: APAGADA, …`. Todos sus mensajes empiezan con `limpieza:`, porque el log de uvicorn no muestra el nombre del logger: después de cada deploy, buscar esa palabra en los logs de Render. Render gratuito duerme el servicio, así que en la práctica borra la pasada de cada arranque: un evento vencido se borra la primera vez que alguien despierta la API después de su fecha.
+
+Desde el día del borrado (se hayan borrado ya o todavía no):
+
+| Dónde | Qué pasa |
+|---|---|
+| `GET /api/pantalla/{token}/fotos` | lista vacía; `GET /api/pantalla/{token}` dice `cerrado` |
+| `GET /api/e/{codigo}`, `/firma`, `/fotos` | `cerrado` y `EVENTO_CERRADO`, como cualquier evento terminado |
+| `GET /api/admin/eventos/{id}/fotos` y `/resumen` | las filas y los totales siguen; el panel no muestra miniaturas |
+| `GET /api/admin/eventos/{id}/descarga`, `GET` y `POST …/video` | 410 `DATOS_INVALIDOS` "Las fotos y el video de este evento ya se borraron" o, si la limpieza todavía no pasó, "… se están borrando" |
+| `PATCH /api/admin/eventos/{id}` a `activo` o `borrador` | 409 `DATOS_INVALIDOS`: no se reabre |
+| `EventoAdmin` | `video_url_listo` en `null`; `fotos_borradas_en` con la fecha, o `null` hasta que la limpieza pasa |
 
 ---
 
@@ -523,7 +554,7 @@ Quien quiere usar la app pide su cuenta en `/admin/registro` y espera a que un a
 
 ### Alta de evento
 
-Nombre y fecha, nada más (un admin puede elegir además para qué cuenta es). Al crearlo, la pantalla muestra lo que se necesita de verdad: el botón grande **Publicar**, con el aviso de que el QR no funciona hasta publicarlo; el **QR descargable en PNG** para imprimir y poner en las mesas, y **Conectar la pantalla** con tres opciones explicadas: *En esta compu* (abre la ventana), *En una tele* (código de seis dígitos) y *En otra compu* (copiar el link).
+Nombre y fecha, nada más (un admin puede elegir además para qué cuenta es). La fecha no puede ser de hace 30 días o más (sus fotos ya estarían vencidas): el selector no la ofrece y, si se tipea igual, el aviso dice *Esa fecha ya pasó hace 30 días o más. Revisá el año*. Al crearlo, la pantalla muestra lo que se necesita de verdad: el botón grande **Publicar**, con el aviso de que el QR no funciona hasta publicarlo; el **QR descargable en PNG** para imprimir y poner en las mesas, y **Conectar la pantalla** con tres opciones explicadas: *En esta compu* (abre la ventana), *En una tele* (código de seis dígitos) y *En otra compu* (copiar el link).
 
 La tarjeta de cada evento es liviana: nombre, fecha, estado, *Revisar fotos (N)* y *Ajustes* a la vista, y *Compartir y pantalla* plegado. Por la regla de medianoche, una fiesta abierta que pasa las 00:00 sigue en Eventos hasta que la terminen: en el historial sólo hay eventos terminados o sin publicar de fecha pasada, y ninguno necesita ese bloque. El panel (`admin/navegacion.ts`, `esDelHistorial`) replica exactamente la regla del backend para saber a qué lista vuelve cada evento.
 
@@ -550,6 +581,8 @@ La página de ajustes sigue el orden del evento: antes (publicar, conectar la pa
 
 Cerrar el evento deja de aceptar fotos y muestra el mensaje de cierre en la pantalla, pero las aprobadas siguen pasando. La descarga permite elegir todas o sólo las aprobadas, muestra progreso (doscientas fotos no salen en dos segundos) y nombra el archivo con el evento y la fecha, no con un identificador.
 
+**Borrado a los 30 días** (sección 5). En *Después del evento* siempre se ve, tenue, *Las fotos y el video se borran el {fecha}*. Desde siete días antes y hasta la víspera, arriba de todo, un aviso naranja: *En N días se borran las fotos y el video. Descargalos antes.* (la víspera, *Mañana se borran las fotos y el video. Descargalos hoy.*), con las descargas a mano; en el celular cada botón va a todo el ancho. El día del borrado ya no se ofrece descargar (el backend responde 410): en vez de descargas y video, una tarjeta tenue *Las fotos y el video se están borrando*, y después *Las fotos y el video se borraron el {fecha}*; en los dos casos, nada que ofrezca descargar ni reabrir. La tarjeta *El evento terminó* con *Reabrir* va al final, junto a *Terminar el evento*, no bajo *Antes del evento*. En el historial, cada tarjeta dice *Se borran el {fecha}* (en naranja a siete días o menos; el día del borrado, *Se están borrando*) o *Fotos borradas el {fecha}*, y ofrece *Descargar video* si hay uno listo (`video_url_listo`). Revisar fotos de un evento borrado muestra *Las fotos de este evento ya se borraron*, sin miniaturas rotas. El video se descarga con nombre legible, `{nombre-del-evento}-{fecha}`, con la transformación `fl_attachment` de Cloudinary: en el celular se guarda en vez de reproducirse.
+
 **Ojo con la memoria de Render:** el ZIP se arma en streaming, no juntando todo en memoria, o con doscientas fotos el servicio se cae.
 
 ---
@@ -572,6 +605,9 @@ JWT_SECRET=cadena-larga-al-azar
 JWT_HORAS=12
 CORS_ORIGINS=http://localhost:5173,https://transmitifoto.onrender.com
 ENTORNO=desarrollo                 # desarrollo | produccion
+# Opcional: true | false. Sin definir, el borrado de Cloudinary a los 30 días
+# corre sólo con ENTORNO=produccion (y nunca sin CLOUDINARY_API_SECRET).
+# LIMPIEZA_ACTIVA=
 
 # ── Frontend (Vite) ────────────────────────────────────────
 VITE_API_URL=http://localhost:8000

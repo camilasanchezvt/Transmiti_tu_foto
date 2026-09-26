@@ -198,10 +198,15 @@ class EventoNuevo(BaseModel):
 
     `organizador_id` es opcional: sin él, el dueño es quien lo crea. Un admin
     puede crear un evento para otra cuenta activa; un organizador, sólo para sí.
+
+    `fecha_evento` no puede ser de hace 30 días o más: sus fotos ya estarían
+    vencidas (se borran a los 30 días de la fecha). Lo controla crear_evento y
+    no un validador de acá, porque el error de validación sale con el mensaje
+    genérico y éste tiene que decir "Revisá el año".
     """
 
     nombre: str = Field(min_length=1, max_length=120)
-    fecha_evento: date
+    fecha_evento: date = Field(description="No puede ser de hace 30 días o más (hoy de Argentina)")
     organizador_id: int | None = None
 
 
@@ -228,6 +233,16 @@ class EventoAdmin(BaseModel):
 
     El dueño viaja siempre, también para un organizador que sólo ve los suyos:
     así el panel usa una sola forma y no tiene que preguntar el rol para leerla.
+
+    A los 30 días de la fecha se borran de Cloudinary las fotos y los videos:
+    `fotos_se_borran_el` dice cuándo (fecha_evento + 30), y `fotos_borradas_en`
+    cuándo pasó, o null si todavía no. Las filas quedan, así que los totales
+    siguen contando las fotos que hubo.
+
+    `video_url_listo` es la URL del último video si está `listo` y los archivos
+    no se borraron ni se están borrando (desde el día del borrado ya es null,
+    aunque la limpieza todavía no haya pasado); si no, null. Es lo que el panel ofrece descargar sin tener
+    que pedir el estado del video a cada evento de la lista.
     """
 
     id: int
@@ -243,6 +258,9 @@ class EventoAdmin(BaseModel):
     rechazadas: int
     organizador_id: int
     organizador_nombre: str
+    fotos_se_borran_el: date
+    fotos_borradas_en: datetime | None
+    video_url_listo: str | None
 
 
 class VideoEvento(BaseModel):
