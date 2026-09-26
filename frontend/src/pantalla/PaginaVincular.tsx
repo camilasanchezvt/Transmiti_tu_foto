@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { ErrorApi, pantalla } from "../api/client";
+import { textos } from "./textos";
+
+const t = textos.conectar;
 
 interface Props {
   onVinculada: (token: string) => void;
@@ -25,7 +28,7 @@ export default function PaginaVincular({ onVinculada }: Props) {
   const entrada = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    document.title = "Vincular pantalla · Transmití tu foto";
+    document.title = t.pestana;
     // El foco va puesto solo: en una tele nadie quiere buscar el campo con la
     // cruceta antes de poder escribir.
     entrada.current?.focus();
@@ -41,7 +44,7 @@ export default function PaginaVincular({ onVinculada }: Props) {
     try {
       onVinculada(await pantalla.canjear(soloDigitos));
     } catch (e) {
-      setError(e instanceof ErrorApi ? e.message : "No pudimos conectarnos. Probá de nuevo");
+      setError(mensajeDeCanje(e));
       setCodigo("");
       entrada.current?.focus();
     } finally {
@@ -52,9 +55,9 @@ export default function PaginaVincular({ onVinculada }: Props) {
   return (
     <main className="flex min-h-full flex-col items-center justify-center gap-6 p-4 text-center sm:gap-8 sm:p-8">
       <div>
-        <h1 className="text-3xl font-semibold leading-tight sm:text-5xl">Vinculá esta pantalla</h1>
-        <p className="mt-3 text-lg text-tenue sm:text-2xl">
-          Pedí el código en el panel y cargalo acá
+        <h1 className="text-3xl font-semibold leading-tight sm:text-5xl">{t.titulo}</h1>
+        <p className="mx-auto mt-3 max-w-2xl text-lg leading-snug text-tenue sm:text-2xl">
+          {t.instrucciones}
         </p>
       </div>
 
@@ -69,7 +72,7 @@ export default function PaginaVincular({ onVinculada }: Props) {
           inputMode="numeric"
           autoComplete="off"
           placeholder="000000"
-          aria-label="Código de seis dígitos"
+          aria-label={t.campo}
           // 12ch y no menos: con `tracking-[0.2em]`, el relleno y el borde, en 9ch
           // se cortaba el último dígito. Así entra también «800 181» con espacio.
           className="w-[12ch] max-w-full rounded-2xl border-4 border-borde bg-hundido px-3 py-4 text-center font-mono text-4xl tracking-[0.2em] text-white outline-none focus:border-acento sm:px-6 sm:text-6xl"
@@ -80,15 +83,41 @@ export default function PaginaVincular({ onVinculada }: Props) {
           disabled={soloDigitos.length !== 6 || enviando}
           className="min-h-boton rounded-full bg-acento px-10 text-xl font-semibold text-white transition disabled:opacity-40 sm:text-2xl"
         >
-          {enviando ? "Vinculando…" : "Vincular"}
+          {enviando ? t.conectando : t.boton}
         </button>
       </form>
 
-      {error && <p className="max-w-xl text-lg text-naranja sm:text-2xl">{error}</p>}
+      {/* role="alert": se anuncia aunque el foco siga en el campo. */}
+      {error && (
+        <p role="alert" className="max-w-xl text-lg leading-snug text-naranja sm:text-2xl">
+          {error}
+        </p>
+      )}
 
-      <p className="max-w-xl text-base text-tenue sm:text-lg">
-        El código dura diez minutos y sirve una sola vez.
-      </p>
+      <p className="max-w-xl text-base text-tenue sm:text-lg">{t.vigencia}</p>
     </main>
   );
+}
+
+/**
+ * Los mensajes del canje, escritos para quien está frente a la tele: cada uno
+ * dice qué hacer. El del backend para un código malo ("Generá uno nuevo") le
+ * habla a quien tiene el panel, que acá suele ser otra persona.
+ */
+function mensajeDeCanje(error: unknown): string {
+  if (!(error instanceof ErrorApi)) return t.sinRed;
+  switch (error.codigo) {
+    case "EVENTO_NO_ENCONTRADO":
+      return t.codigoNoSirve;
+    case "DEMASIADOS_PEDIDOS":
+      // El tope es de 30 intentos cada diez minutos: "esperá un momento" se
+      // queda corto.
+      return t.demasiados;
+    case "SIN_RED":
+      // http 0 es que no hubo respuesta: la tele no tiene red. Con otro
+      // número respondió algo que no era la app (Render despertando).
+      return error.http === 0 ? t.sinRed : error.message;
+    default:
+      return error.message;
+  }
 }

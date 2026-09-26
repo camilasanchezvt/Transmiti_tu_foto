@@ -255,10 +255,10 @@ El estado vive en memoria (`app/vinculacion.py`), igual que `ratelimit.py` y por
 las mismas razones. Un reinicio obliga a generar el código de nuevo, y como la
 vinculación entera dura menos de un minuto, en la práctica no molesta.
 
-**Falta:** llevar estos dos endpoints a la sección 5 de CONSTRUIR-APP.md. El
-brief sigue describiendo catorce. `tests/test_contrato.py` tiene la lista
-`AGREGADOS`, que es lo que hace que el agregado sea deliberado: si aparece un
-endpoint que no está ni en el contrato ni ahí, la prueba falla.
+**Ya están en la sección 5 de CONSTRUIR-APP.md** (desde el 25-sep-2026).
+`tests/test_contrato.py` tiene la lista `AGREGADOS`, que es lo que hace que el
+agregado sea deliberado: si aparece un endpoint que no está ni en el contrato
+ni ahí, la prueba falla.
 
 ### Cómo transmitir a una tele
 **Referencia.** Ordenado por confiabilidad para un evento de tres horas:
@@ -276,6 +276,101 @@ endpoint que no está ni en el contrato ni ahí, la prueba falla.
 `requestFullscreen`, `wakeLock`, `AbortController` y `localStorage` están
 escritos con `?.` y dentro de `try`: si la tele no los tiene, la pantalla
 degrada en vez de romperse.
+
+### Cuentas y roles: admin y organizador
+**Fuera de fase, 25-sep-2026.** `administradores` pasó a `usuarios` con `rol`
+(`admin`, `organizador`) y `estado` (`pendiente`, `activa`, `baja`), y
+`eventos.admin_id` a `usuario_id` (migración `0003_usuarios_y_roles`). Cuatro
+endpoints nuevos, en la sección 5 y en `AGREGADOS`: registro, `yo`, y listar y
+cambiar cuentas. Lo que se decidió:
+
+- **Baja en vez de borrar.** Una cuenta no se borra: pasa a `baja`, no entra,
+  sus eventos y fotos quedan y un admin la puede reactivar. Es la regla 7
+  llevada a las cuentas.
+- **El registro no revela emails.** Responde siempre `201 {"estado":"pendiente"}`
+  y, si el email existe, no toca nada. El hash se calcula antes de mirar si
+  existe, para que el tiempo de respuesta tampoco lo delate. Con el mismo
+  criterio, el login con un email inexistente compara contra un hash de relleno.
+- **Nadie cambia su propio rol ni su estado.** Así nunca se queda el sistema
+  sin admins y nadie se bloquea solo. El nombre propio sí se puede cambiar.
+- **404 para lo ajeno, no 403.** Un organizador que pide un evento o una foto
+  de otra cuenta recibe lo mismo que si no existiera: un 403 le confirmaría que
+  ese id existe. El 403 queda para lo que es de admin (cuentas).
+- La cuenta se relee en cada pedido, no se confía en el token: una baja corta
+  las sesiones abiertas en el acto.
+- "Hoy" para vigentes/historial es UTC−3 fijo y no `zoneinfo`: en Windows no
+  hay base de zonas y rompe las pruebas.
+
+En el mismo cambio, del lado del panel:
+
+- **Sin colores por evento.** Se borró `admin/color.ts`. Lo que evita aprobar
+  fotos del evento equivocado es la barra fija con el nombre y el nombre en el
+  título de la pestaña.
+- **"Compartir y pantalla" vive en la tarjeta de la lista**, no se duplica en
+  Ajustes: Ajustes linkea a `/admin#evento-{id}`, que abre ese bloque. En el
+  historial sólo lo tienen los eventos que siguen abiertos (con la regla de
+  medianoche del 26-sep, ninguno del historial sigue abierto: ver abajo).
+- Ajustes y Revisar fotos vuelven a la lista de origen (el historial con su
+  filtro) por el `state` del link; si no hay, a la lista donde vive el evento.
+- Un id que no entra en `bigint` responde `DATOS_INVALIDOS` 422 y no 500: un
+  manejador de `DataError` en `main.py`.
+
+### Superadmin, regla de medianoche y tope de firmas por celular
+**Fuera de fase, 26-sep-2026.** Tres decisiones de la usuaria. Las tres están
+en la sección 5 de CONSTRUIR-APP.md; acá va el porqué. Ningún endpoint nuevo.
+
+**1. Tercer rol: `superadmin`.** Es la dueña de la app: todo lo de un admin y
+además gestiona a los admins. Migración `0004_superadmin`, que sólo amplía el
+`CHECK` de `usuarios.rol`.
+
+- **No se promueve a nadie en la migración ni desde el panel.** El superadmin
+  se nombra a mano con un `UPDATE` (sección 5, *Nombrar un superadmin*). El
+  email real no va en el código ni en la documentación: el repositorio es
+  público. `crear_admin.py` pregunta el rol, `superadmin` por defecto.
+- **La matriz de `PATCH /api/admin/cuentas/{id}`:** admin y superadmin
+  gestionan organizadores en cualquier estado (habilitar, baja, reactivar,
+  renombrar, hacer admin); sólo un superadmin gestiona admins; al superadmin
+  no lo toca nadie, ni otro superadmin (403); `rol: superadmin` en el body es
+  422 siempre; lo propio sigue como antes (rol o estado 422, nombre sí).
+- **Los admins también crean admins.** Lo eligió la usuaria. Deshacerlo, en
+  cambio, es sólo de un superadmin: un admin no puede ni renombrar a otro.
+- **El permiso se decide por lo que la cuenta es, no por el efecto del
+  cambio.** Un admin que le manda a otro admin su mismo nombre recibe 403
+  igual: si no, el 200 o el 403 dependerían de datos que no se ven.
+- Para todo lo que no son cuentas, el superadmin es un admin más: `es_admin`
+  y `solo_admin` aceptan los dos roles, y `es_superadmin` aparte se usa sólo
+  en la matriz.
+- El seed suma `sofia@transmitifoto.test`, superadmin, al final: las otras
+  cuentas conservan sus ids.
+- El downgrade de `0004` vuelve `admin` a los superadmin antes de restaurar el
+  `CHECK` viejo. Siguen entrando y viendo todo; pierden sólo la gestión de admins.
+
+**2. Regla de medianoche** (resuelve el pendiente "Una fiesta que pasa la
+medianoche cae en el historial"). Vigentes = `activo` de cualquier fecha, o
+`borrador` con fecha de hoy en adelante. Historial = `cerrado` de cualquier
+fecha, o `borrador` de fecha pasada. Una fiesta abierta sigue en Eventos hasta
+que alguien la termina, no hasta el mediodía siguiente: un corte a una hora
+fija vuelve a fallar con la fiesta que se estira. Un abierto viejo que nadie
+terminó queda arriba de todo en Eventos, que es justo donde hay que verlo.
+"Hoy" sigue siendo UTC−3 fijo. El panel (`admin/navegacion.ts`,
+`esDelHistorial`) replica la regla exacta. El listado sin `alcance` ahora
+desempata por id, para que el orden no dependa de la base.
+
+**3. Tope de firmas por celular** (resuelve el pendiente "El tope de firmas por
+IP es corto para el wifi del salón"). 30 cada 10 minutos por (IP, evento,
+`dispositivo_hash`) y 600 por (IP, evento). El segundo es un techo contra un
+script que inventa un dispositivo por pedido: 600 firmas en diez minutos son
+60 invitados mandando sus diez fotos en la misma ventana, y la mayoría de las
+noches no se acerca. Si un salón grande llegara, se sube el número en
+`routers/publico.py`. Las dos cuentas se anotan juntas o ninguna
+(`ratelimit.permitido_en_todas`): un celular que insiste después de su tope no
+le come lugar al resto del salón, y una conexión llena no le gasta la cuota a
+un celular. Sigue valiendo el máximo de fotos por celular del evento. El canje
+de pantalla conserva su propio tope de 30 por IP.
+
+Además, `@heroicons/react` quedó autorizado por pedido de la usuaria (sección
+2): outline 24 para la mayoría, solid para acciones principales, mini 20 para
+chips y botones chicos, y el ícono acompaña al texto, no lo reemplaza.
 
 ---
 

@@ -1,4 +1,4 @@
-"""Contraseñas y tokens de sesión. Sólo para el administrador.
+"""Contraseñas y tokens de sesión. Sólo para las cuentas del panel.
 
 Los invitados no tienen cuenta ni login: se identifican por `dispositivo_hash`,
 sin pedirles datos.
@@ -35,12 +35,16 @@ def verificar_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def crear_token(admin_id: int, email: str) -> tuple[str, datetime]:
-    """Devuelve el token y su vencimiento, que es lo que pide el contrato."""
+def crear_token(usuario_id: int, email: str) -> tuple[str, datetime]:
+    """Devuelve el token y su vencimiento, que es lo que pide el contrato.
+
+    El token no lleva rol ni estado a propósito: se leen de la base en cada
+    pedido, así una baja o un cambio de rol valen en el acto.
+    """
     expira_en = datetime.now(timezone.utc) + timedelta(hours=config.JWT_HORAS)
     token = jwt.encode(
         {
-            "sub": str(admin_id),
+            "sub": str(usuario_id),
             "email": email,
             "iat": datetime.now(timezone.utc),
             "exp": expira_en,
@@ -52,7 +56,7 @@ def crear_token(admin_id: int, email: str) -> tuple[str, datetime]:
 
 
 def leer_token(token: str) -> int:
-    """Devuelve el id del administrador, o levanta NO_AUTORIZADO."""
+    """Devuelve el id de la cuenta, o levanta NO_AUTORIZADO."""
     try:
         carga = jwt.decode(token, config.JWT_SECRET, algorithms=[ALGORITMO])
     except jwt.PyJWTError:

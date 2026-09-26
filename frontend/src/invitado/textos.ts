@@ -18,11 +18,24 @@ export const textos = {
 
   errorRed: "No pudimos subirla. Probá de nuevo",
   errorArchivo: "Sólo podemos recibir fotos",
-  errorLimite: (cuantas: number) => `Ya mandaste tus ${cuantas} fotos. ¡Gracias!`,
+  // Con una sola foto permitida, "tus 1 fotos" no se dice.
+  errorLimite: (cuantas: number) =>
+    cuantas === 1 ? "Ya mandaste tu foto. ¡Gracias!" : `Ya mandaste tus ${cuantas} fotos. ¡Gracias!`,
+  // Muchos invitados en el mismo wifi del salón cuentan como uno solo para el
+  // tope de pedidos. Lo que ve el invitado es que hay que esperar un poco.
+  errorMuchas: "Están llegando muchas fotos juntas. Esperá un minuto y probá de nuevo",
   eventoCerrado: "Este evento ya terminó",
 
+  // Si la página no abre, el invitado todavía no mandó nada: "no pudimos
+  // subirla" no tiene sentido ahí. Debajo va el botón "Probar de nuevo".
+  errorCarga: "No pudimos abrir el evento. Revisá tu señal y probá de nuevo",
+  // Un evento sin publicar responde igual que uno que no existe. Lo más común
+  // es que alguien escanee el QR impreso antes de que arranque.
+  eventoNoEncontrado: "No encontramos este evento. Si todavía no empezó, probá en un rato",
+
   // El nombre es opcional a propósito: pedirlo obligatorio agrega un paso a algo
-  // que tiene que salir de un toque.
-  etiquetaNombre: "Tu nombre (si querés)",
+  // que tiene que salir de un toque. Se aclara dónde va a aparecer: sale en la
+  // pared, debajo de la foto, delante de todos.
+  etiquetaNombre: "Tu nombre en la pantalla (si querés)",
   ejemploNombre: "Sofi",
 } as const;

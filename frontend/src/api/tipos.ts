@@ -104,6 +104,9 @@ export interface CambioEvento {
 export interface EventoNuevo {
   nombre: string;
   fecha_evento: string;
+  /** Sólo un admin lo usa, para crearle el evento a otra cuenta activa. Sin
+   *  esto, el dueño es quien lo crea. */
+  organizador_id?: number;
 }
 
 export interface EventoAdmin {
@@ -118,6 +121,75 @@ export interface EventoAdmin {
   pendientes: number;
   aprobadas: number;
   rechazadas: number;
+  /** Dueño del evento. Un organizador sólo ve los suyos; un admin, todos. */
+  organizador_id: number;
+  organizador_nombre: string;
+}
+
+/** Query de GET /api/admin/eventos. Sin alcance vienen todos. Regla de
+ *  medianoche (hoy = Argentina):
+ *  vigentes = abiertos de cualquier fecha + sin publicar de hoy en adelante;
+ *  historial = terminados + sin publicar de fecha pasada.
+ *  admin/navegacion.ts (esDelHistorial) la replica. */
+export type AlcanceEventos = "vigentes" | "historial";
+
+export interface FiltroEventos {
+  alcance?: AlcanceEventos;
+  /** Sólo lo respeta el backend si quien pide es admin. */
+  organizador?: number;
+}
+
+// ── Cuentas y roles ──────────────────────────────────────────
+// Las cuentas se crean solas desde el registro público y nacen pendientes.
+// Darlas de baja no borra nada: sus eventos y fotos quedan.
+
+/** superadmin es la dueña de la app: todo lo de un admin y además gestiona a
+ *  los admins. Nadie la nombra desde el panel. */
+export type RolUsuario = "superadmin" | "admin" | "organizador";
+export type EstadoCuenta = "pendiente" | "activa" | "baja";
+
+/** GET /api/admin/yo */
+export interface UsuarioYo {
+  id: number;
+  email: string;
+  nombre: string;
+  rol: RolUsuario;
+}
+
+/** GET /api/admin/cuentas (sólo admin) y respuesta de PATCH /api/admin/cuentas/{id} */
+export interface Cuenta {
+  id: number;
+  email: string;
+  nombre: string;
+  rol: RolUsuario;
+  estado: EstadoCuenta;
+  creado_en: string;
+  /** Cuántos eventos tiene. */
+  eventos: number;
+  /** fecha_evento más reciente, o null si no tiene ninguno. */
+  ultimo_evento: string | null;
+}
+
+/** Cuerpo de PATCH /api/admin/cuentas/{id}: al menos uno. 'pendiente' no se
+ *  acepta: una cuenta habilitada no vuelve a esperar. 'superadmin' tampoco: no
+ *  se asigna desde el panel. Nadie cambia su propio rol ni su propio estado. */
+export interface CambioCuenta {
+  estado?: Exclude<EstadoCuenta, "pendiente">;
+  rol?: Exclude<RolUsuario, "superadmin">;
+  nombre?: string;
+}
+
+/** POST /api/cuentas/registro (público) */
+export interface PedidoRegistro {
+  email: string;
+  nombre: string;
+  password: string;
+}
+
+/** Siempre la misma respuesta, exista o no el email: así no se puede averiguar
+ *  qué emails están registrados. */
+export interface RespuestaRegistro {
+  estado: "pendiente";
 }
 
 /** GET y POST /api/admin/eventos/{id}/video */

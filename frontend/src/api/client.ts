@@ -5,15 +5,18 @@
 // solo tipo de excepción y las pantallas nunca leen `response.json()` a mano.
 
 import type {
+  CambioCuenta,
   ColaPantalla,
   CodigoError,
   CodigoVinculacion,
+  Cuenta,
   EventoAdmin,
   CambioEvento,
   EventoNuevo,
   EventoPublico,
   EstadoEvento,
   EstadoFoto,
+  FiltroEventos,
   Firma,
   FotoModerada,
   FotoNueva,
@@ -21,13 +24,17 @@ import type {
   ListaFotosAdmin,
   Pantalla,
   PedidoLogin,
+  PedidoRegistro,
+  RespuestaRegistro,
   ResultadoLote,
   Resumen,
   Salud,
   Sesion,
+  UsuarioYo,
   VideoEvento,
   TokenDePantalla,
 } from "./tipos";
+import { textosBase } from "../comp/textos";
 
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -46,6 +53,19 @@ export class ErrorApi extends Error {
   /** Cuando no hubo respuesta: el celular perdió señal o el servidor duerme. */
   get esDeRed(): boolean {
     return this.codigo === "SIN_RED";
+  }
+
+  /** 401: no hay sesión, venció, o la cuenta se dio de baja. Hay que volver a
+   *  entrar. Ojo: NO_AUTORIZADO también viaja con 403, así que el código solo
+   *  no alcanza para decidir si mandar al login. */
+  get esSinSesion(): boolean {
+    return this.http === 401;
+  }
+
+  /** 403: hay sesión pero no alcanza el permiso (una pantalla de admin pedida
+   *  por un organizador, o en el login una cuenta pendiente o de baja). */
+  get esSinPermiso(): boolean {
+    return this.http === 403;
   }
 }
 
@@ -74,6 +94,12 @@ export function haySesion(): boolean {
   return tokenAdmin !== null;
 }
 
+/** El token actual. Lo usa useSesion para saber si lo que tiene en memoria es
+ *  de esta sesión o de una anterior (entrar con otra cuenta cambia el token). */
+export function tokenDeSesion(): string | null {
+  return tokenAdmin;
+}
+
 interface Opciones {
   metodo?: "GET" | "POST" | "PATCH";
   cuerpo?: unknown;
@@ -100,7 +126,7 @@ async function pedir<T>(ruta: string, opciones: Opciones = {}): Promise<T> {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
     // Render gratuito duerme el servicio: el primer pedido puede tardar cerca
     // de un minuto o directamente fallar.
-    throw new ErrorApi("SIN_RED", "No pudimos conectarnos. Probá de nuevo", 0);
+    throw new ErrorApi("SIN_RED", textosBase.sinRed, 0);
   }
 
   if (respuesta.status === 204) return undefined as T;
@@ -126,7 +152,7 @@ async function comoErrorApi(respuesta: Response): Promise<ErrorApi> {
   } catch {
     /* el cuerpo no era JSON */
   }
-  return new ErrorApi("SIN_RED", "Algo salió mal. Probá de nuevo", respuesta.status);
+  return new ErrorApi("SIN_RED", textosBase.errorGenerico, respuesta.status);
 }
 
 // ── Públicos ─────────────────────────────────────────────────
@@ -208,8 +234,31 @@ export const admin = {
 
   salir: () => guardarToken(null),
 
-  eventos: () => pedir<EventoAdmin[]>("/api/admin/eventos", { conAuth: true }),
+  /** Quién está usando el panel y con qué rol. */
+  yo: () => pedir<UsuarioYo>("/api/admin/yo", { conAuth: true }),
 
+  /** Todas las cuentas con su historial. Sólo admin: un organizador recibe 403. */
+  cuentas: () => pedir<Cuenta[]>("/api/admin/cuentas", { conAuth: true }),
+
+  /** Habilitar, dar de baja, reactivar, cambiar el rol o el nombre. Idempotente. */
+  cambiarCuenta: (id: number, cambio: CambioCuenta) =>
+    pedir<Cuenta>(`/api/admin/cuentas/${id}`, {
+      metodo: "PATCH",
+      cuerpo: cambio,
+      conAuth: true,
+    }),
+
+  /** Un admin ve todos; un organizador, sólo los suyos. Sin alcance vienen
+   *  todos; `vigentes` llega por fecha ascendente e `historial` descendente. */
+  eventos: (filtro: FiltroEventos = {}) => {
+    const query = new URLSearchParams();
+    if (filtro.alcance) query.set("alcance", filtro.alcance);
+    if (filtro.organizador !== undefined) query.set("organizador", String(filtro.organizador));
+    const cola = query.toString();
+    return pedir<EventoAdmin[]>(`/api/admin/eventos${cola ? `?${cola}` : ""}`, { conAuth: true });
+  },
+
+  /** `organizador_id` es opcional: sólo un admin puede crearle un evento a otra cuenta. */
   crearEvento: (evento: EventoNuevo) =>
     pedir<EventoAdmin>("/api/admin/eventos", {
       metodo: "POST",
@@ -286,6 +335,18 @@ export const admin = {
     if (!respuesta.ok) throw await comoErrorApi(respuesta);
     return respuesta.blob();
   },
+};
+
+// ── Cuentas (público, sin token) ─────────────────────────────
+
+export const cuentas = {
+  /** Crea la cuenta pendiente. Responde lo mismo aunque el email ya exista:
+   *  no hay forma de saber desde acá si ya estaba registrado. */
+  registrar: (pedido: PedidoRegistro) =>
+    pedir<RespuestaRegistro>("/api/cuentas/registro", {
+      metodo: "POST",
+      cuerpo: pedido,
+    }),
 };
 
 export const salud = () => pedir<Salud>("/api/salud");

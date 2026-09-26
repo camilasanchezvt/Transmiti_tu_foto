@@ -3,6 +3,11 @@
 `evento_por_codigo` y `evento_por_token` son las dos puertas de entrada
 públicas. Cada una acota por su clave, y de ahí sale el aislamiento entre
 eventos simultáneos: ninguna consulta se hace por el id interno.
+
+Del lado del panel, `usuario_actual` dice quién pide y `evento_del_usuario`
+acota por dueño: un admin llega a cualquier evento, un organizador sólo a los
+suyos. Para todo lo que no son cuentas, un superadmin es un admin más: la única
+diferencia está en routers/cuentas.py, donde además gestiona a los admins.
 """
 
 from __future__ import annotations
@@ -14,23 +19,48 @@ from sqlalchemy.orm import Session
 
 from .database import get_db
 from .errores import Codigo, ErrorApp
-from .models import Administrador, Evento
+from .models import Evento, Usuario
 from .security import leer_token
 
 _esquema_bearer = HTTPBearer(auto_error=False)
 
 
-def admin_actual(
+def usuario_actual(
     credenciales: HTTPAuthorizationCredentials | None = Depends(_esquema_bearer),
     db: Session = Depends(get_db),
-) -> Administrador:
+) -> Usuario:
+    """La cuenta se relee en cada pedido, no se confía en lo que dice el token.
+
+    Así una cuenta dada de baja deja de entrar en el acto, aunque tenga un token
+    vigente por doce horas más, y un cambio de rol vale desde el pedido
+    siguiente.
+    """
     if credenciales is None or not credenciales.credentials:
         raise ErrorApp(Codigo.NO_AUTORIZADO)
-    admin_id = leer_token(credenciales.credentials)
-    admin = db.get(Administrador, admin_id)
-    if admin is None:
+    usuario = db.get(Usuario, leer_token(credenciales.credentials))
+    if usuario is None or usuario.estado != "activa":
         raise ErrorApp(Codigo.NO_AUTORIZADO)
-    return admin
+    return usuario
+
+
+# Los roles que ven todo. El superadmin es un admin que además gestiona admins.
+ROLES_ADMIN = ("superadmin", "admin")
+
+
+def es_admin(usuario: Usuario) -> bool:
+    """Admin o superadmin: ve todos los eventos y todas las cuentas."""
+    return usuario.rol in ROLES_ADMIN
+
+
+def es_superadmin(usuario: Usuario) -> bool:
+    return usuario.rol == "superadmin"
+
+
+def solo_admin(usuario: Usuario = Depends(usuario_actual)) -> Usuario:
+    """Admin o superadmin. 403 y no 401: la sesión es válida, lo que falta es permiso."""
+    if not es_admin(usuario):
+        raise ErrorApp(Codigo.NO_AUTORIZADO, "No tenés permiso para esto", http=403)
+    return usuario
 
 
 def evento_por_codigo(codigo_publico: str, db: Session = Depends(get_db)) -> Evento:
@@ -51,9 +81,13 @@ def evento_por_token(token_pantalla: str, db: Session = Depends(get_db)) -> Even
     return evento
 
 
-def evento_del_admin(id_evento: int, db: Session, admin: Administrador) -> Evento:
-    """Acota por administrador: nadie modera los eventos de otro."""
+def evento_del_usuario(id_evento: int, db: Session, usuario: Usuario) -> Evento:
+    """Un admin o un superadmin llega a cualquier evento; un organizador, sólo a los suyos.
+
+    El evento ajeno responde 404 y no 403, igual que uno que no existe: un 403
+    le confirmaría a un organizador que ese id es un evento de otra persona.
+    """
     evento = db.get(Evento, id_evento)
-    if evento is None or evento.admin_id != admin.id:
+    if evento is None or not (es_admin(usuario) or evento.usuario_id == usuario.id):
         raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
     return evento

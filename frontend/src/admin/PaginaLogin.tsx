@@ -1,59 +1,164 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { admin } from "../api/client";
+import { ErrorApi, admin, tokenDeSesion } from "../api/client";
 import Boton from "../comp/Boton";
-import MensajeError from "../comp/MensajeError";
+import { Aviso, AvisoDeError, Campo, MarcoAcceso, PieAcceso } from "./PiezasAcceso";
+import { acceso } from "./textos/acceso";
+import { comun } from "./textos/comun";
+import { olvidarSesion } from "./useSesion";
 
-/** FASE 5: formulario mínimo. El panel completo llega en la Fase 8. */
+/**
+ * Entrar al panel. Sin LayoutAdmin: quien llega acá todavía no tiene sesión.
+ *
+ * Los mensajes de error se muestran tal cual los manda el backend:
+ * - 401: email o contraseña incorrectos, o una cuenta que todavía no
+ *   habilitaron. Es UN solo mensaje para los dos casos, a propósito: si la
+ *   pendiente tuviera uno propio, crear una cuenta y después probar entrar
+ *   diría qué emails ya estaban registrados.
+ * - 403: cuenta dada de baja (sólo con la contraseña correcta).
+ * - 429: demasiados intentos seguidos.
+ */
 export default function PaginaLogin() {
   const navegar = useNavigate();
+  const idTitulo = useId();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [faltanDatos, setFaltanDatos] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  // Cambia en cada fracaso para que el aviso se vuelva a montar: si el mensaje
+  // es el mismo que el anterior, un lector de pantalla igual lo anuncia.
+  const [intento, setIntento] = useState(0);
   const [enviando, setEnviando] = useState(false);
+  const refEmail = useRef<HTMLInputElement>(null);
+  const refPassword = useRef<HTMLInputElement>(null);
+  const refAviso = useRef<HTMLParagraphElement>(null);
+  // Cuando alguien ya tocó Entrar, la verificación de la sesión anterior (que
+  // puede tardar si el servidor estaba dormido) llega tarde y no decide nada.
+  const yaIntentoEntrar = useRef(false);
+
+  useEffect(() => {
+    document.title = comun.tituloPestana(acceso.entrar.tituloPestana);
+  }, []);
+
+  // Si ya hay una sesión que sirve, este formulario sobra. Se pregunta al
+  // backend y no se mira sólo si hay token: uno vencido o de una cuenta dada
+  // de baja mandaría a /admin, y de ahí useSesion lo devolvería acá.
+  useEffect(() => {
+    if (!tokenDeSesion()) return;
+    let vivo = true;
+    admin.yo().then(
+      () => {
+        if (vivo && !yaIntentoEntrar.current) navegar("/admin", { replace: true });
+      },
+      (e: unknown) => {
+        // Un 401 es un token que ya no sirve: se tira. Sin red, no se sabe;
+        // queda el formulario y el que entre pisa el token.
+        if (vivo && !yaIntentoEntrar.current && e instanceof ErrorApi && e.esSinSesion) {
+          olvidarSesion();
+        }
+      },
+    );
+    return () => {
+      vivo = false;
+    };
+  }, [navegar]);
+
+  // Al fallar, el teclado del celular tapa el aviso, que está abajo del
+  // último campo. Se cierra el teclado y se lleva el aviso a la vista.
+  useEffect(() => {
+    if (error == null) return;
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    refAviso.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [error, intento]);
 
   async function entrar(evento: FormEvent) {
     evento.preventDefault();
+    if (enviando) return;
     setError(null);
+
+    const emailLimpio = email.trim();
+    if (!emailLimpio || !password) {
+      setFaltanDatos(true);
+      (emailLimpio ? refPassword : refEmail).current?.focus();
+      return;
+    }
+
+    setFaltanDatos(false);
     setEnviando(true);
+    yaIntentoEntrar.current = true;
+    // olvidarSesion() borra lo que useSesion recordaba de la cuenta anterior Y
+    // el token. Por eso va ANTES del login: después borraría el token nuevo.
+    olvidarSesion();
     try {
-      await admin.login({ email, password });
-      navegar("/admin");
+      await admin.login({ email: emailLimpio, password });
+      navegar("/admin", { replace: true });
     } catch (e) {
       setError(e);
-    } finally {
+      setIntento((n) => n + 1);
       setEnviando(false);
     }
   }
 
   return (
-    <main className="mx-auto flex min-h-full max-w-sm flex-col justify-center gap-6 p-4 sm:p-8">
-      <form onSubmit={entrar} className="flex flex-col gap-4 rounded-3xl border border-borde bg-panel p-6">
-        <h1 className="mb-2 text-2xl font-semibold">Panel</h1>
-        <input
+    <MarcoAcceso>
+      <form
+        onSubmit={entrar}
+        noValidate
+        aria-labelledby={idTitulo}
+        className="flex flex-col gap-4 rounded-3xl border border-borde bg-panel p-5 sm:p-6"
+      >
+        <header className="mb-1 flex flex-col gap-1 text-center">
+          <h1 id={idTitulo} className="text-2xl font-semibold tracking-tight">
+            {acceso.marca}
+          </h1>
+          <p className="text-base text-tenue">{acceso.entrar.subtitulo}</p>
+        </header>
+
+        <Campo
+          etiqueta={acceso.campos.email}
+          refCampo={refEmail}
           type="email"
+          name="email"
           value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          placeholder="Email"
+          onChange={(e) => {
+            setEmail(e.target.value);
+            setFaltanDatos(false);
+          }}
           autoComplete="username"
-          required
-          className="min-h-boton rounded-2xl border border-borde bg-hundido px-4 text-lg outline-none focus:border-acento"
+          inputMode="email"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          maxLength={254}
         />
-        <input
+        <Campo
+          etiqueta={acceso.campos.password}
+          refCampo={refPassword}
           type="password"
+          name="password"
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Contraseña"
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setFaltanDatos(false);
+          }}
           autoComplete="current-password"
-          required
-          className="min-h-boton rounded-2xl border border-borde bg-hundido px-4 text-lg outline-none focus:border-acento"
+          enterKeyHint="go"
         />
-        <Boton type="submit" cargando={enviando}>
-          Entrar
+
+        {faltanDatos && <Aviso>{acceso.entrar.faltanDatos}</Aviso>}
+        {error != null && <AvisoDeError key={intento} error={error} refAviso={refAviso} />}
+
+        <Boton type="submit" cargando={enviando} className="mt-1">
+          {acceso.entrar.boton}
         </Boton>
       </form>
-      {error != null && <MensajeError error={error} />}
-    </main>
+
+      <PieAcceso
+        pregunta={acceso.entrar.sinCuenta}
+        a="/admin/registro"
+        texto={acceso.entrar.crearCuenta}
+      />
+    </MarcoAcceso>
   );
 }

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from app import ratelimit
 from app.cloudinary_service import firmar
 from app.models import Foto
+from app.routers import publico as rutas_publico
 from tests.conftest import (
     CODIGO_ACTIVO,
     CODIGO_BORRADOR,
@@ -137,27 +138,128 @@ def test_firma_de_evento_cerrado(cliente_con_base, eventos):
     afirmar_error(r, "EVENTO_CERRADO", 409)
 
 
-def test_firma_respeta_el_limite_de_pedidos(cliente_con_base, eventos):
-    """30 pedidos cada 10 minutos por IP y evento."""
-    cuerpo = {"dispositivo_hash": DISPOSITIVO}
-    for i in range(ratelimit.MAXIMO_PEDIDOS):
-        r = cliente_con_base.post(f"/api/e/{CODIGO_ACTIVO}/firma", json=cuerpo)
+def firmar_desde(cliente, dispositivo: str, ip: str = "203.0.113.50", codigo: str = CODIGO_ACTIVO):
+    """Todos los pedidos salen de la misma IP, como el wifi de un salón."""
+    return cliente.post(f"/api/e/{codigo}/firma", json={"dispositivo_hash": dispositivo},
+                        headers={"X-Forwarded-For": ip})
+
+
+def celular(n: int) -> str:
+    return f"celular-{n:05d}".ljust(32, "0")
+
+
+def test_los_topes_de_firma():
+    """30 por celular y 600 por conexión, cada 10 minutos. Si alguien los
+    cambia, que sea a propósito: la sección 5 los documenta."""
+    assert rutas_publico.MAXIMO_FIRMAS_POR_DISPOSITIVO == 30
+    assert rutas_publico.MAXIMO_FIRMAS_POR_CONEXION == 600
+    assert ratelimit.VENTANA_SEGUNDOS == 600
+
+
+def test_firma_tope_por_celular(cliente_con_base, eventos):
+    """30 firmas cada 10 minutos por IP, evento y celular: la 31 del mismo celular es 429."""
+    for i in range(rutas_publico.MAXIMO_FIRMAS_POR_DISPOSITIVO):
+        r = firmar_desde(cliente_con_base, DISPOSITIVO)
         assert r.status_code == 200, f"el pedido {i + 1} no debería haberse frenado"
-    afirmar_error(
-        cliente_con_base.post(f"/api/e/{CODIGO_ACTIVO}/firma", json=cuerpo),
-        "DEMASIADOS_PEDIDOS",
-        429,
-    )
+    afirmar_error(firmar_desde(cliente_con_base, DISPOSITIVO), "DEMASIADOS_PEDIDOS", 429)
+
+
+def test_muchos_celulares_desde_la_misma_ip_no_se_bloquean(cliente_con_base, eventos):
+    """El wifi del salón: todos salen por la misma IP. Con un celular ya frenado,
+    31 celulares más desde esa IP firman igual."""
+    for _ in range(rutas_publico.MAXIMO_FIRMAS_POR_DISPOSITIVO):
+        firmar_desde(cliente_con_base, DISPOSITIVO)
+    afirmar_error(firmar_desde(cliente_con_base, DISPOSITIVO), "DEMASIADOS_PEDIDOS", 429)
+
+    for n in range(31):
+        r = firmar_desde(cliente_con_base, celular(n))
+        assert r.status_code == 200, f"el celular {n + 1} no debería haberse frenado: {r.text}"
+
+
+def test_el_mismo_celular_desde_otra_ip_tiene_su_propia_cuenta(cliente_con_base, eventos):
+    """La cuenta es por (IP, evento, celular): si pasa del wifi a los datos, arranca de nuevo."""
+    for _ in range(rutas_publico.MAXIMO_FIRMAS_POR_DISPOSITIVO):
+        firmar_desde(cliente_con_base, DISPOSITIVO)
+    afirmar_error(firmar_desde(cliente_con_base, DISPOSITIVO), "DEMASIADOS_PEDIDOS", 429)
+    assert firmar_desde(cliente_con_base, DISPOSITIVO, ip="198.51.100.20").status_code == 200
+
+
+def test_firma_tope_por_conexion(cliente_con_base, eventos):
+    """600 cada 10 minutos por IP y evento, sumando todos los celulares: frena a
+    un script que inventa un dispositivo por pedido. Otra IP sigue firmando."""
+    tope = rutas_publico.MAXIMO_FIRMAS_POR_CONEXION
+    por_celular = rutas_publico.MAXIMO_FIRMAS_POR_DISPOSITIVO
+    for i in range(tope):
+        r = firmar_desde(cliente_con_base, celular(i // por_celular))
+        assert r.status_code == 200, f"el pedido {i + 1} no debería haberse frenado: {r.text}"
+
+    afirmar_error(firmar_desde(cliente_con_base, celular(99999)), "DEMASIADOS_PEDIDOS", 429)
+    assert firmar_desde(cliente_con_base, celular(99999), ip="198.51.100.20").status_code == 200
+
+
+def test_un_celular_frenado_no_gasta_el_tope_de_la_conexion():
+    """Las dos cuentas se anotan juntas o ninguna. Un celular que insiste
+    después de su tope no le come lugar al resto del salón. Con topes chicos
+    para verlo entero: 2 por celular y 3 por conexión."""
+    def pide(dispositivo: str) -> bool:
+        return ratelimit.permitido_en_todas(
+            [(("1.2.3.4", CODIGO_ACTIVO, dispositivo), 2), (("1.2.3.4", CODIGO_ACTIVO), 3)],
+            ahora=0.0,
+        )
+
+    assert pide("a") and pide("a")
+    assert not any(pide("a") for _ in range(50)), "el celular a ya gastó sus dos"
+    assert pide("b"), "los 50 intentos frenados de a no contaron para la conexión"
+    assert not pide("c"), "la conexión llegó a 3"
+    assert not pide("b"), "b tiene lugar, pero la conexión no"
+
+
+def test_una_conexion_llena_no_le_gasta_la_cuota_a_un_celular():
+    """Topes de 2 y 2. `a` llena la conexión en el segundo 0; `b` insiste cinco
+    veces en el 300 y lo frena la conexión. En el 601 se liberan las marcas de
+    `a`, y `b` tiene sus dos firmas enteras: los cinco intentos frenados, que
+    seguirían dentro de la ventana, no le contaron."""
+    def pide(dispositivo: str, momento: float) -> bool:
+        return ratelimit.permitido_en_todas(
+            [(("1.2.3.4", CODIGO_ACTIVO, dispositivo), 2), (("1.2.3.4", CODIGO_ACTIVO), 2)],
+            ahora=momento,
+        )
+
+    assert pide("a", 0.0) and pide("a", 0.0)
+    assert not any(pide("b", 300.0) for _ in range(5))
+    despues = ratelimit.VENTANA_SEGUNDOS + 1
+    assert pide("b", despues) and pide("b", despues)
+    assert not pide("b", despues)
+
+
+def test_un_pedido_frenado_no_crea_cuentas_nuevas():
+    """Un script que inventa un dispositivo por pedido contra una conexión llena
+    no hace crecer el diccionario del límite."""
+    conexion = (("1.2.3.4", CODIGO_ACTIVO), 1)
+    assert ratelimit.permitido_en_todas([(("1.2.3.4", CODIGO_ACTIVO, "a"), 30), conexion],
+                                        ahora=0.0)
+    antes = len(ratelimit._pedidos)
+    for n in range(100):
+        assert not ratelimit.permitido_en_todas(
+            [(("1.2.3.4", CODIGO_ACTIVO, f"inventado-{n}"), 30), conexion], ahora=0.0
+        )
+    assert len(ratelimit._pedidos) == antes
+
+
+def test_el_tope_se_libera_a_los_diez_minutos():
+    clave = [(("1.2.3.4", CODIGO_ACTIVO, "a"), 1)]
+    assert ratelimit.permitido_en_todas(clave, ahora=0.0)
+    assert not ratelimit.permitido_en_todas(clave, ahora=ratelimit.VENTANA_SEGUNDOS - 1)
+    assert ratelimit.permitido_en_todas(clave, ahora=ratelimit.VENTANA_SEGUNDOS + 1)
 
 
 def test_el_limite_de_pedidos_es_por_evento(cliente_con_base, eventos):
     """Gastar la cuota de un evento no puede dejar sin subir a los de otro."""
-    cuerpo = {"dispositivo_hash": DISPOSITIVO}
-    for _ in range(ratelimit.MAXIMO_PEDIDOS):
-        cliente_con_base.post(f"/api/e/{CODIGO_ACTIVO}/firma", json=cuerpo)
+    for _ in range(rutas_publico.MAXIMO_FIRMAS_POR_DISPOSITIVO):
+        firmar_desde(cliente_con_base, DISPOSITIVO)
     # El otro evento está cerrado, así que su error tiene que ser el del cierre
     # y no el del límite: prueba que la cuota no se comparte.
-    r = cliente_con_base.post(f"/api/e/{CODIGO_CERRADO}/firma", json=cuerpo)
+    r = firmar_desde(cliente_con_base, DISPOSITIVO, codigo=CODIGO_CERRADO)
     afirmar_error(r, "EVENTO_CERRADO", 409)
 
 
@@ -262,6 +364,23 @@ def test_limite_por_dispositivo(cliente_con_base, eventos):
     )
     afirmar_error(r, "LIMITE_ALCANZADO", 429)
     assert "10" in r.json()["error"]["mensaje"]
+
+
+def test_con_una_sola_foto_el_limite_se_dice_en_singular(cliente_con_base, eventos, db):
+    """"Ya mandaste tus 1 fotos" no se dice: con cupo 1, "Ya mandaste tu foto"."""
+    activo = eventos["activo"]
+    activo.max_fotos_por_dispositivo = 1
+    db.commit()
+    disp = "u" * 32
+    primera = cliente_con_base.post(
+        f"/api/e/{CODIGO_ACTIVO}/fotos", json=cuerpo_foto(sufijo="unica", dispositivo_hash=disp)
+    )
+    assert primera.status_code == 201, primera.text
+    r = cliente_con_base.post(
+        f"/api/e/{CODIGO_ACTIVO}/fotos", json=cuerpo_foto(sufijo="otra", dispositivo_hash=disp)
+    )
+    afirmar_error(r, "LIMITE_ALCANZADO", 429)
+    assert r.json()["error"]["mensaje"] == "Ya mandaste tu foto. ¡Gracias!"
 
 
 def test_las_rechazadas_cuentan_para_el_limite(cliente_con_base, eventos, db):

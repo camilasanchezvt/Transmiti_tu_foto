@@ -1,6 +1,8 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 
-type Variante = "principal" | "secundario" | "peligro";
+import { textosBase } from "./textos";
+
+export type Variante = "principal" | "secundario" | "peligro";
 
 interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
   variante?: Variante;
@@ -17,6 +19,26 @@ const ESTILOS: Record<Variante, string> = {
 };
 
 /**
+ * Las clases del botón grande, sueltas, para darle la misma forma a un <Link>
+ * o a un <a> de descarga: ir a otra página o bajar un archivo es un link, no
+ * un botón (se puede abrir en otra pestaña).
+ *
+ *   <Link to="…" className={claseBoton("principal")}>Revisar fotos</Link>
+ *
+ * inline-flex y no block: con w-full ocupa toda la fila igual que un botón, y
+ * con un sm:w-auto encima vuelve al ancho de su texto (un flex con w-auto
+ * seguiría ocupando la fila entera). Centra el texto en un link, que no lo
+ * centra solo como un <button>.
+ */
+export function claseBoton(variante: Variante = "principal"): string {
+  return (
+    "inline-flex min-h-boton w-full items-center justify-center rounded-full px-6 text-center text-lg font-semibold " +
+    "transition disabled:cursor-not-allowed disabled:opacity-50 " +
+    `focus:outline-none focus-visible:ring-2 focus-visible:ring-acento ${ESTILOS[variante]}`
+  );
+}
+
+/**
  * Mínimo 56 px de alto: se toca con una mano, en un salón oscuro y con el
  * brillo bajo. Se deshabilita solo mientras carga, que es lo que evita el
  * doble toque en subir.
@@ -30,16 +52,8 @@ export default function Boton({
   ...resto
 }: Props) {
   return (
-    <button
-      {...resto}
-      disabled={disabled || cargando}
-      className={
-        "min-h-boton w-full rounded-full px-6 text-lg font-semibold " +
-        "transition disabled:cursor-not-allowed disabled:opacity-50 " +
-        `focus:outline-none focus-visible:ring-2 focus-visible:ring-acento ${ESTILOS[variante]} ${className}`
-      }
-    >
-      {cargando ? "Esperá…" : children}
+    <button {...resto} disabled={disabled || cargando} className={`${claseBoton(variante)} ${className}`}>
+      {cargando ? textosBase.esperar : children}
     </button>
   );
 }

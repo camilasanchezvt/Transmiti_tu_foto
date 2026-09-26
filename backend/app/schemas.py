@@ -12,12 +12,30 @@ administración sí, porque van detrás del Bearer.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 EstadoEvento = Literal["borrador", "activo", "cerrado"]
 EstadoFoto = Literal["pendiente", "aprobada", "rechazada"]
+RolUsuario = Literal["superadmin", "admin", "organizador"]
+EstadoCuenta = Literal["pendiente", "activa", "baja"]
+
+# El nombre de una cuenta, sin espacios de sobra. Se recorta ANTES de medir,
+# así "   " cuenta como vacío y no como un nombre de tres caracteres.
+NombreCuenta = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
+
+# Un email normalizado: sin espacios y en minúsculas, que es como se guarda y se
+# compara. El formato se valida con un patrón simple a propósito: validar de
+# verdad pide la librería email-validator, que no está en el stack (regla 10), y
+# lo que importa acá es descartar lo que claramente no es un email.
+EmailCuenta = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, to_lower=True, max_length=254,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    ),
+]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -84,10 +102,18 @@ class FotoNueva(BaseModel):
 
     El `public_id` tiene que empezar con `eventos/{codigo_publico}/`. Sin esa
     verificación cualquiera podría registrar la URL de una imagen ajena.
+
+    Los dos con largo máximo: los de Cloudinary miden unos 30 y 100 caracteres.
+    El formato (carpeta, url exacta) lo miran verificar_public_id y
+    verificar_url, que responden PUBLIC_ID_AJENO y ARCHIVO_INVALIDO; acá sólo
+    se corta lo que no puede ser una foto de nadie.
     """
 
-    public_id: str = Field(examples=["eventos/ab12cd34/k3j2h1"])
-    url: str = Field(examples=["https://res.cloudinary.com/demo/image/upload/v1/eventos/ab12cd34/k3j2h1.jpg"])
+    public_id: str = Field(max_length=200, examples=["eventos/ab12cd34/k3j2h1"])
+    url: str = Field(
+        max_length=500,
+        examples=["https://res.cloudinary.com/demo/image/upload/v1/eventos/ab12cd34/k3j2h1.jpg"],
+    )
     ancho: int = Field(gt=0)
     alto: int = Field(gt=0)
     bytes: int = Field(gt=0)
@@ -154,8 +180,12 @@ class ColaPantalla(BaseModel):
 # ─────────────────────────────────────────────────────────────
 
 class PedidoLogin(BaseModel):
-    email: str = Field(examples=["ana@transmitifoto.test"])
-    password: str = Field(min_length=1)
+    """Con largo máximo: el email es parte de la clave del tope de pedidos, y
+    ninguno de los dos puede ser más largo que lo que acepta el registro de
+    ninguna cuenta (254 y 128; se deja margen para las creadas a mano)."""
+
+    email: str = Field(max_length=254, examples=["ana@transmitifoto.test"])
+    password: str = Field(min_length=1, max_length=1024)
 
 
 class Sesion(BaseModel):
@@ -164,10 +194,15 @@ class Sesion(BaseModel):
 
 
 class EventoNuevo(BaseModel):
-    """Cuerpo de POST /api/admin/eventos. Nombre y fecha, nada más."""
+    """Cuerpo de POST /api/admin/eventos.
+
+    `organizador_id` es opcional: sin él, el dueño es quien lo crea. Un admin
+    puede crear un evento para otra cuenta activa; un organizador, sólo para sí.
+    """
 
     nombre: str = Field(min_length=1, max_length=120)
     fecha_evento: date
+    organizador_id: int | None = None
 
 
 class CambioEstadoEvento(BaseModel):
@@ -189,7 +224,11 @@ class CambioEstadoEvento(BaseModel):
 
 
 class EventoAdmin(BaseModel):
-    """Un evento visto desde el panel: con sus dos claves y sus totales."""
+    """Un evento visto desde el panel: con sus dos claves, sus totales y su dueño.
+
+    El dueño viaja siempre, también para un organizador que sólo ve los suyos:
+    así el panel usa una sola forma y no tiene que preguntar el rol para leerla.
+    """
 
     id: int
     nombre: str
@@ -202,6 +241,8 @@ class EventoAdmin(BaseModel):
     pendientes: int
     aprobadas: int
     rechazadas: int
+    organizador_id: int
+    organizador_nombre: str
 
 
 class VideoEvento(BaseModel):
@@ -268,6 +309,78 @@ class LoteModeracion(BaseModel):
 
 class ResultadoLote(BaseModel):
     afectadas: int
+
+
+# ─────────────────────────────────────────────────────────────
+# Cuentas y roles
+# ─────────────────────────────────────────────────────────────
+
+class PedidoRegistro(BaseModel):
+    """Cuerpo de POST /api/cuentas/registro. Público, sin token.
+
+    La contraseña tiene el mismo mínimo que pide crear_admin.py. El máximo es
+    para que nadie mande un megabyte a que lo pase por bcrypt.
+    """
+
+    email: EmailCuenta = Field(examples=["bruno@transmitifoto.test"])
+    nombre: NombreCuenta = Field(examples=["Bruno"])
+    password: str = Field(min_length=10, max_length=128)
+
+
+class RegistroRecibido(BaseModel):
+    """Respuesta 201 del registro. Es SIEMPRE la misma, exista o no el email:
+    una respuesta distinta serviría para averiguar qué emails están registrados."""
+
+    estado: Literal["pendiente"]
+
+
+class UsuarioYo(BaseModel):
+    """GET /api/admin/yo: quién tiene la sesión abierta."""
+
+    id: int
+    email: str
+    nombre: str
+    rol: RolUsuario
+
+
+class Cuenta(BaseModel):
+    """Una cuenta vista por un admin, con un resumen de su historial.
+
+    `ultimo_evento` es la fecha del evento más reciente de la cuenta, o null si
+    todavía no tiene ninguno.
+    """
+
+    id: int
+    email: str
+    nombre: str
+    rol: RolUsuario
+    estado: EstadoCuenta
+    creado_en: datetime
+    eventos: int
+    ultimo_evento: date | None
+
+
+class CambioCuenta(BaseModel):
+    """Cuerpo de PATCH /api/admin/cuentas/{id}. Cualquier combinación, al menos uno.
+
+    `pendiente` no es un valor aceptado: una cuenta se habilita o se da de baja,
+    no vuelve a esperar. Dar de baja reemplaza a borrar: nada se borra.
+
+    `rol: superadmin` pasa la validación sólo para que el endpoint responda con
+    un mensaje claro ("El rol superadmin no se asigna desde el panel") en vez
+    del genérico de datos inválidos. Nunca se aplica: el superadmin se nombra a
+    mano en la base. Quién puede cambiar qué cuenta está en routers/cuentas.py.
+    """
+
+    estado: Literal["activa", "baja"] | None = None
+    rol: RolUsuario | None = None
+    nombre: NombreCuenta | None = None
+
+    @model_validator(mode="after")
+    def _algo_para_cambiar(self) -> "CambioCuenta":
+        if self.estado is None and self.rol is None and self.nombre is None:
+            raise ValueError("Mandá al menos un campo para cambiar")
+        return self
 
 
 # ─────────────────────────────────────────────────────────────

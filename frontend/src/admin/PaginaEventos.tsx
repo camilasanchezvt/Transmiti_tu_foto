@@ -1,329 +1,520 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 
-import { ErrorApi, admin, haySesion } from "../api/client";
-import type { EventoAdmin } from "../api/tipos";
+import { ErrorApi, admin, tokenDeSesion } from "../api/client";
+import type { Cuenta, EventoAdmin } from "../api/tipos";
 import Boton from "../comp/Boton";
+import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
+import ChipEstado from "../comp/ChipEstado";
 import MensajeError from "../comp/MensajeError";
-import { dibujarQR } from "../lib/qr";
-import { colorDelEvento } from "./color";
+import { fechaLarga } from "../lib/fecha";
+import CompartirEvento from "./CompartirEvento";
+import LayoutAdmin from "./LayoutAdmin";
+import { anclaDelEvento, useEventoDelAncla } from "./navegacion";
+import { comun } from "./textos/comun";
+import { textosEventos as t } from "./textos/eventos";
+import { useAlPerderSesion, useSesion } from "./useSesion";
 
+type AlCambiar = (evento: EventoAdmin) => void;
+
+const CAMPO =
+  "mt-1 block h-12 w-full min-w-0 rounded-xl border border-borde bg-hundido px-3 " +
+  "text-base text-white outline-none focus:border-acento";
+
+/**
+ * Los eventos que están por delante: crear uno, publicarlo y compartirlo.
+ *
+ * Los terminados o con la fecha ya pasada viven en Historial. Acá queda sólo lo
+ * que todavía hay que preparar o que está pasando, así lo de esta noche no se
+ * pierde entre veinte fiestas viejas.
+ */
 export default function PaginaEventos() {
-  const navegar = useNavigate();
+  const { usuario, esAdmin } = useSesion();
+  const alPerderSesion = useAlPerderSesion();
   const [eventos, setEventos] = useState<EventoAdmin[] | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [creando, setCreando] = useState(false);
-  const [nombre, setNombre] = useState("");
-  const [fecha, setFecha] = useState("");
-  const [reciencreado, setRecienCreado] = useState<EventoAdmin | null>(null);
+  const [errorLista, setErrorLista] = useState<unknown>(null);
+  const [reciente, setReciente] = useState<EventoAdmin | null>(null);
+  const cuentas = useCuentas(esAdmin);
+  // Si se llegó desde Ajustes con #evento-12, esa tarjeta abre "Compartir y
+  // pantalla" y se trae a la vista.
+  const delAncla = useEventoDelAncla(eventos !== null);
 
-  const cargar = useCallback(async () => {
-    try {
-      setEventos(await admin.eventos());
-    } catch (e) {
-      if (e instanceof ErrorApi && e.codigo === "NO_AUTORIZADO") {
-        navegar("/admin/login");
-        return;
+  /** `silencioso`: para poner los números al día sin tapar la lista con un
+   *  error si falla. La lista vieja sirve más que un cartel. */
+  const cargar = useCallback(
+    async (silencioso = false) => {
+      // Sin token no se pregunta: useSesion ya está mandando al login.
+      if (!tokenDeSesion()) return;
+      if (!silencioso) setErrorLista(null);
+      try {
+        const lista = await admin.eventos({ alcance: "vigentes" });
+        setEventos(lista);
+        setReciente((r) => (r ? (lista.find((e) => e.id === r.id) ?? r) : r));
+      } catch (e) {
+        if (alPerderSesion(e)) return;
+        if (!silencioso) setErrorLista(e);
       }
-      setError(e);
-    }
-  }, [navegar]);
+    },
+    [alPerderSesion],
+  );
 
   useEffect(() => {
-    if (!haySesion()) {
-      navegar("/admin/login");
-      return;
-    }
-    document.title = "Eventos · Transmití tu foto";
+    document.title = comun.tituloPestana(t.titulo);
     cargar();
-  }, [cargar, navegar]);
+  }, [cargar]);
+
+  // Al volver a esta pestaña (por ejemplo, desde Revisar fotos en otra), los
+  // números de fotos por revisar se ponen al día sin recargar.
+  useEffect(() => {
+    function alVolver() {
+      if (document.visibilityState === "visible") cargar(true);
+    }
+    document.addEventListener("visibilitychange", alVolver);
+    return () => document.removeEventListener("visibilitychange", alVolver);
+  }, [cargar]);
+
+  const actualizar = useCallback<AlCambiar>((evento) => {
+    setEventos((lista) => lista?.map((e) => (e.id === evento.id ? evento : e)) ?? lista);
+    setReciente((r) => (r?.id === evento.id ? evento : r));
+  }, []);
+
+  async function alCrear(nuevo: EventoAdmin) {
+    setReciente(nuevo);
+    await cargar(true);
+  }
+
+  // El recién creado ya se ve arriba, destacado: no se repite en la lista.
+  // Al cerrarlo aparece en su lugar, porque la lista ya lo trae.
+  const lista = eventos?.filter((e) => e.id !== reciente?.id) ?? [];
+
+  let contenido: ReactNode;
+  if (eventos === null) {
+    contenido = errorLista ? (
+      <MensajeError error={errorLista} onReintentar={() => cargar()} />
+    ) : (
+      <Cargando texto={t.cargando} />
+    );
+  } else if (lista.length === 0) {
+    contenido = reciente ? null : <Vacio />;
+  } else {
+    contenido = (
+      <ul className="flex flex-col gap-4">
+        {lista.map((e) => (
+          <TarjetaEvento
+            key={e.id}
+            evento={e}
+            verOrganizador={esAdmin}
+            compartirAbierto={e.id === delAncla}
+            onCambio={actualizar}
+          />
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <LayoutAdmin
+      titulo={t.titulo}
+      // Las cuentas ya se piden acá para el selector "Para": se le pasa el
+      // número de pendientes al layout para que no las pida otra vez. 0
+      // mientras cargan (con undefined, el layout las pediría por su cuenta).
+      pendientesCuentas={esAdmin ? (cuentas?.filter((c) => c.estado === "pendiente").length ?? 0) : undefined}
+    >
+      <FormularioCrear cuentas={cuentas} idPropio={usuario?.id ?? null} onCreado={alCrear} />
+
+      {reciente && (
+        <RecienCreado
+          key={reciente.id}
+          evento={reciente}
+          verOrganizador={esAdmin}
+          onCambio={actualizar}
+          onCerrar={() => setReciente(null)}
+        />
+      )}
+
+      {contenido}
+
+      {eventos !== null && (
+        <div className="mt-8 flex justify-center">
+          <Link
+            to="/admin/historial"
+            className={
+              "inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-center text-sm text-acento " +
+              "hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
+            }
+          >
+            {t.alHistorial}
+            <span aria-hidden className="text-lg leading-none">
+              ›
+            </span>
+          </Link>
+        </div>
+      )}
+    </LayoutAdmin>
+  );
+}
+
+function mensajeDe(error: unknown, porDefecto: string): string {
+  return error instanceof ErrorApi ? error.message : porDefecto;
+}
+
+// ── Crear ────────────────────────────────────────────────────
+
+/**
+ * Las cuentas, sólo para un admin: el selector "Para" y el número de la
+ * pestaña Cuentas. null mientras cargan o para un organizador. Si fallan, una
+ * lista vacía: no hay selector y crear para uno mismo sigue andando, que es lo
+ * que se hace casi siempre.
+ */
+function useCuentas(esAdmin: boolean): Cuenta[] | null {
+  const [cuentas, setCuentas] = useState<Cuenta[] | null>(null);
+
+  useEffect(() => {
+    if (!esAdmin) return;
+    let vivo = true;
+    admin.cuentas().then(
+      (lista) => {
+        if (vivo) setCuentas(lista);
+      },
+      () => {
+        if (vivo) setCuentas([]);
+      },
+    );
+    return () => {
+      vivo = false;
+    };
+  }, [esAdmin]);
+
+  return esAdmin ? cuentas : null;
+}
+
+/** Las cuentas activas a las que un admin puede crearles un evento, sin la
+ *  propia (esa es "Mí"). */
+function otrasActivas(cuentas: Cuenta[] | null, idPropio: number | null): Cuenta[] {
+  return (cuentas ?? [])
+    .filter((c) => c.estado === "activa" && c.id !== idPropio)
+    .sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+}
+
+function FormularioCrear({
+  cuentas,
+  idPropio,
+  onCreado,
+}: {
+  /** null para un organizador: sin selector "Para". */
+  cuentas: Cuenta[] | null;
+  idPropio: number | null;
+  onCreado: (evento: EventoAdmin) => Promise<void>;
+}) {
+  const alPerderSesion = useAlPerderSesion();
+  const idTitulo = useId();
+  const [nombre, setNombre] = useState("");
+  const [fecha, setFecha] = useState("");
+  // "" es quien lo crea. Si no, el id (como texto) de la cuenta elegida.
+  const [para, setPara] = useState("");
+  const [creando, setCreando] = useState(false);
+  const [falla, setFalla] = useState<string | null>(null);
+  const otras = otrasActivas(cuentas, idPropio);
+
+  // Si no hay a quién más elegir, el selector sobra.
+  const conPara = otras.length > 0;
 
   async function crear(evento: FormEvent) {
     evento.preventDefault();
     setCreando(true);
-    setError(null);
+    setFalla(null);
     try {
-      const nuevo = await admin.crearEvento({ nombre, fecha_evento: fecha });
+      const nuevo = await admin.crearEvento({
+        nombre: nombre.trim(),
+        fecha_evento: fecha,
+        ...(para ? { organizador_id: Number(para) } : {}),
+      });
       setNombre("");
       setFecha("");
-      setRecienCreado(nuevo);
-      await cargar();
+      setPara("");
+      await onCreado(nuevo);
     } catch (e) {
-      setError(e);
+      if (alPerderSesion(e)) return;
+      setFalla(mensajeDe(e, t.crear.error));
     } finally {
       setCreando(false);
     }
   }
 
-  if (error && !eventos) return <MensajeError error={error} onReintentar={cargar} />;
-  if (!eventos) return <Cargando texto="Cargando eventos…" />;
-
   return (
-    <main className="mx-auto max-w-3xl px-4 py-6 sm:p-6">
-      <header className="mb-6 flex items-center justify-between sm:mb-8">
-        <h1 className="text-2xl font-semibold">Eventos</h1>
-        <button
-          onClick={() => {
-            admin.salir();
-            navegar("/admin/login");
-          }}
-          className="text-sm text-tenue underline underline-offset-4 hover:text-white"
-        >
-          Salir
-        </button>
-      </header>
+    <form
+      onSubmit={crear}
+      aria-labelledby={idTitulo}
+      className="mb-6 rounded-3xl border border-borde bg-panel p-5"
+    >
+      <h2 id={idTitulo} className="mb-3 text-lg font-semibold">
+        {t.crear.titulo}
+      </h2>
 
-      <form
-        onSubmit={crear}
-        className="mb-8 grid gap-3 rounded-3xl border border-borde bg-panel p-4 sm:mb-10 sm:grid-cols-[1fr_auto_10rem] sm:items-end"
+      {/* Apilado en el celular; en fila desde sm. Con el selector "Para" son
+          cuatro campos: en el celular la fecha y "Para" comparten fila (el
+          formulario no puede tapar la lista), y hasta md van en dos filas,
+          porque a 640 px cuatro columnas no entran. */}
+      <div
+        className={
+          "grid gap-3 sm:items-end " +
+          (conPara
+            ? "grid-cols-2 md:grid-cols-[minmax(0,1fr)_9.5rem_10rem_auto]"
+            : "sm:grid-cols-[minmax(0,1fr)_10rem_auto]")
+        }
       >
-        <label className="min-w-0 text-sm text-tenue">
-          Nombre
+        <label className={`min-w-0 text-sm text-tenue ${conPara ? "col-span-2 md:col-span-1" : ""}`}>
+          {t.crear.nombre}
           <input
             value={nombre}
             onChange={(e) => setNombre(e.target.value)}
             required
             maxLength={120}
-            placeholder="Casamiento Ana y Juan"
-            className="mt-1 h-12 w-full rounded-xl border border-borde bg-hundido px-3 text-base text-white outline-none focus:border-acento"
+            autoComplete="off"
+            placeholder={t.crear.nombreEjemplo}
+            className={CAMPO}
           />
         </label>
-        <label className="text-sm text-tenue">
-          Fecha
+
+        <label className="min-w-0 text-sm text-tenue">
+          {t.crear.fecha}
           <input
             type="date"
             value={fecha}
             onChange={(e) => setFecha(e.target.value)}
             required
-            className="mt-1 h-12 w-full rounded-xl border border-borde bg-hundido px-3 text-base text-white outline-none focus:border-acento"
+            className={CAMPO}
           />
         </label>
-        <Boton type="submit" cargando={creando}>Crear</Boton>
-      </form>
 
-      {error ? <div className="mb-6"><MensajeError error={error} /></div> : null}
-
-      {reciencreado && (
-        <RecienCreado evento={reciencreado} onCerrar={() => setRecienCreado(null)} />
-      )}
-
-      {eventos.length === 0 ? (
-        <p className="text-tenue">Todavía no creaste ningún evento.</p>
-      ) : (
-        <ul className="flex flex-col gap-3">
-          {eventos.map((e) => (
-            <li
-              key={e.id}
-              className="rounded-3xl border border-borde bg-panel p-4"
-              style={{ borderLeft: `6px solid ${colorDelEvento(e.codigo_publico)}` }}
+        {conPara && (
+          <label className="min-w-0 text-sm text-tenue">
+            {t.crear.para}
+            {/* color-scheme oscuro: sin esto, en Windows la lista desplegada
+                sale blanca con letras blancas. */}
+            <select
+              value={para}
+              onChange={(e) => setPara(e.target.value)}
+              className={`${CAMPO} [color-scheme:dark]`}
             >
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <h2 className="break-words text-lg font-semibold">{e.nombre}</h2>
-                  <p className="text-sm text-tenue">
-                    {e.fecha_evento} · {e.estado}
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-                  <p className="mr-auto text-sm sm:mr-0">
-                    <strong className="text-xl text-acento">{e.pendientes}</strong>
-                    <span className="text-tenue">{e.pendientes === 1 ? " pendiente" : " pendientes"}</span>
-                  </p>
-                  <Link
-                    to={`/admin/eventos/${e.id}/moderar`}
-                    className="rounded-full border border-borde bg-panel px-4 py-2 text-sm hover:bg-white/15"
-                  >
-                    Moderar
-                  </Link>
-                  <Link
-                    to={`/admin/eventos/${e.id}/cierre`}
-                    className="rounded-full border border-borde bg-panel px-4 py-2 text-sm hover:bg-white/15"
-                  >
-                    Cierre
-                  </Link>
-                </div>
-              </div>
-              <ClavesDelEvento evento={e} />
-            </li>
-          ))}
-        </ul>
+              <option value="" className="bg-black">
+                {t.crear.paraMi}
+              </option>
+              {otras.map((c) => (
+                <option key={c.id} value={String(c.id)} className="bg-black">
+                  {c.nombre}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {/* En fila, 48 px como los campos; apilado en el celular, los 56 px
+            del botón grande. */}
+        <Boton
+          type="submit"
+          cargando={creando}
+          className={`sm:min-h-12 sm:px-8 ${conPara ? "col-span-2 md:col-span-1" : ""}`}
+        >
+          {t.crear.boton}
+        </Boton>
+      </div>
+
+      {falla && (
+        <p role="alert" className="mt-3 text-sm text-rojo">
+          {falla}
+        </p>
       )}
-    </main>
+    </form>
   );
 }
 
-/** Lo que se necesita de verdad al crear un evento: el QR para imprimir y el
- *  link de la pantalla para abrir en la notebook del proyector. */
-function RecienCreado({ evento, onCerrar }: { evento: EventoAdmin; onCerrar: () => void }) {
+// ── Lista ────────────────────────────────────────────────────
+
+function Vacio() {
   return (
-    <div className="mb-10 rounded-2xl border border-acento bg-panel p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Listo: {evento.nombre}</h2>
-        <button onClick={onCerrar} className="text-sm text-tenue hover:text-white">Cerrar</button>
-      </div>
-      <ClavesDelEvento evento={evento} destacado />
-    </div>
-  );
-}
-
-function ClavesDelEvento({ evento, destacado = false }: { evento: EventoAdmin; destacado?: boolean }) {
-  const urlInvitado = `${window.location.origin}/e/${evento.codigo_publico}`;
-  const urlPantalla = `${window.location.origin}/p/${evento.token_pantalla}`;
-
-  return (
-    <div className={`mt-4 flex flex-wrap items-center gap-6 ${destacado ? "justify-center" : "text-sm"}`}>
-      {destacado && <QrDescargable url={urlInvitado} nombre={evento.nombre} />}
-      <div className="flex min-w-0 flex-1 basis-64 flex-col gap-3">
-        <Copiable etiqueta="Link para los invitados (el del QR)" valor={urlInvitado} />
-        <Copiable etiqueta="Link de la pantalla" valor={urlPantalla} abrible />
-        <VincularPantalla evento={evento} />
-      </div>
-      {!destacado && <QrDescargable url={urlInvitado} nombre={evento.nombre} chico />}
-    </div>
-  );
-}
-
-function QrDescargable({ url, nombre, chico = false }: { url: string; nombre: string; chico?: boolean }) {
-  const lienzo = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    if (!lienzo.current) return;
-    // Se dibuja grande siempre y se muestra chico por CSS: el PNG que se baja
-    // tiene que servir para imprimir, no para la pantalla.
-    dibujarQR(lienzo.current, url, 1024).catch(() => {});
-  }, [url]);
-
-  function bajar() {
-    const png = lienzo.current?.toDataURL("image/png");
-    if (!png) return;
-    const a = document.createElement("a");
-    a.href = png;
-    a.download = `QR ${nombre}.png`;
-    a.click();
-  }
-
-  return (
-    <div className="flex flex-col items-center gap-2">
-      <canvas
-        ref={lienzo}
-        className={`rounded-xl bg-white ${chico ? "h-24 w-24" : "h-[min(220px,70vw)] w-[min(220px,70vw)]"}`}
-      />
-      <button onClick={bajar} className="text-xs text-tenue underline underline-offset-4 hover:text-white">
-        Bajar PNG
-      </button>
+    <div className="rounded-3xl border border-borde bg-panel px-5 py-10 text-center">
+      <p className="text-lg font-semibold">{t.vacio.titulo}</p>
+      <p className="mx-auto mt-2 max-w-md text-base leading-snug text-tenue">{t.vacio.texto}</p>
     </div>
   );
 }
 
 /**
- * El código de seis dígitos para vincular una tele.
- *
- * El link de la pantalla mide 68 caracteres. Con una notebook se copia y pega;
- * con el control remoto de una tele es imposible. Esto lo reemplaza por seis
- * dígitos, que es lo único que un control hace bien.
+ * Liviana a propósito: el nombre, la fecha, en qué está y lo próximo que hay
+ * que hacer. Compartir y la pantalla se usan una vez por evento, así que van
+ * plegados.
  */
-function VincularPantalla({ evento }: { evento: EventoAdmin }) {
-  const [codigo, setCodigo] = useState<string | null>(null);
-  const [restante, setRestante] = useState(0);
-  const [pidiendo, setPidiendo] = useState(false);
+function TarjetaEvento({
+  evento,
+  verOrganizador,
+  compartirAbierto,
+  onCambio,
+}: {
+  evento: EventoAdmin;
+  verOrganizador: boolean;
+  /** Llegó con #evento-{id} desde Ajustes: "Compartir y pantalla" abierto. */
+  compartirAbierto: boolean;
+  onCambio: AlCambiar;
+}) {
+  const hayPorRevisar = evento.pendientes > 0;
+
+  return (
+    // scroll-mt: al traerla a la vista por el ancla, que no quede debajo de la
+    // barra fija de arriba.
+    <li id={anclaDelEvento(evento.id)} className="scroll-mt-24 rounded-3xl border border-borde bg-panel p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="break-words text-lg font-semibold leading-snug">{evento.nombre}</h2>
+          <Datos evento={evento} verOrganizador={verOrganizador} />
+        </div>
+        <div className="mt-0.5 shrink-0">
+          <ChipEstado estado={evento.estado} />
+        </div>
+      </div>
+
+      {evento.estado === "borrador" ? (
+        <Publicar evento={evento} texto={t.tarjeta.publicar} onCambio={onCambio} />
+      ) : (
+        hayPorRevisar && (
+          <p className="mt-3 text-sm font-medium text-acento">{t.tarjeta.porRevisar(evento.pendientes)}</p>
+        )
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Link
+          to={`/admin/eventos/${evento.id}/revisar`}
+          className={claseBotonChico(hayPorRevisar ? "azul" : "vidrio")}
+        >
+          {t.tarjeta.revisarFotos(evento.pendientes)}
+        </Link>
+        <Link to={`/admin/eventos/${evento.id}/ajustes`} className={claseBotonChico("vidrio")}>
+          {t.tarjeta.ajustes}
+        </Link>
+      </div>
+
+      <CompartirEvento evento={evento} abiertoAlInicio={compartirAbierto} />
+    </li>
+  );
+}
+
+/** "sábado 26 de septiembre" y, en otra línea, "Organiza Bruno". El dueño,
+ *  sólo para un admin: un organizador ve sólo los suyos y ya sabe de quién
+ *  son. En su línea y no después de un "·": igual que en Historial y Ajustes. */
+function Datos({ evento, verOrganizador }: { evento: EventoAdmin; verOrganizador: boolean }) {
+  return (
+    <>
+      <p className="mt-0.5 text-sm text-tenue">{fechaLarga(evento.fecha_evento)}</p>
+      {verOrganizador && (
+        <p className="break-words text-sm text-tenue">{comun.organiza(evento.organizador_nombre)}</p>
+      )}
+    </>
+  );
+}
+
+/**
+ * El botón grande de publicar, con el aviso de por qué hace falta. Mientras el
+ * evento está sin publicar el QR lleva a un "no existe": es el error más fácil
+ * de cometer y el que más se nota, con las mesas ya llenas de QR impresos.
+ */
+function Publicar({ evento, texto, onCambio }: { evento: EventoAdmin; texto: string; onCambio: AlCambiar }) {
+  const alPerderSesion = useAlPerderSesion();
+  const [publicando, setPublicando] = useState(false);
   const [falla, setFalla] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (restante <= 0) return;
-    const id = window.setTimeout(() => setRestante((s) => s - 1), 1000);
-    return () => window.clearTimeout(id);
-  }, [restante]);
-
-  useEffect(() => {
-    if (restante === 0) setCodigo(null);
-  }, [restante]);
-
-  async function pedirCodigo() {
-    setPidiendo(true);
+  async function publicar() {
+    setPublicando(true);
     setFalla(null);
     try {
-      const respuesta = await admin.vincularPantalla(evento.id);
-      setCodigo(respuesta.codigo);
-      setRestante(Math.max(0, Math.round((Date.parse(respuesta.expira_en) - Date.now()) / 1000)));
+      onCambio(await admin.cambiarEstadoEvento(evento.id, "activo"));
     } catch (e) {
-      setFalla(e instanceof ErrorApi ? e.message : "No pudimos generar el código");
+      if (alPerderSesion(e)) return;
+      setFalla(mensajeDe(e, t.publicar.error));
     } finally {
-      setPidiendo(false);
+      setPublicando(false);
     }
   }
 
-  const minutos = Math.floor(restante / 60);
-  const segundos = String(restante % 60).padStart(2, "0");
-
   return (
-    <div className="min-w-0">
-      <p className="text-xs text-tenue">Vincular una tele o un proyector con navegador</p>
-      {codigo ? (
-        <div className="mt-1 flex flex-wrap items-center gap-3">
-          <code className="rounded-lg bg-hundido px-3 py-1 font-mono text-2xl tracking-widest text-acento">
-            {codigo.slice(0, 3)} {codigo.slice(3)}
-          </code>
-          <span className="text-xs text-tenue">
-            Abrí <strong className="text-white">{window.location.origin}/p</strong> en la tele y
-            cargá estos dígitos · vence en {minutos}:{segundos}
-          </span>
-        </div>
-      ) : (
-        <div className="mt-1 flex flex-wrap items-center gap-2">
-          <button
-            onClick={pedirCodigo}
-            disabled={pidiendo}
-            className="rounded-full border border-borde bg-panel px-3 py-1 text-xs hover:bg-white/15 disabled:opacity-50"
-          >
-            {pidiendo ? "Generando…" : "Generar código de 6 dígitos"}
-          </button>
-          {falla && <span className="text-xs text-rojo">{falla}</span>}
-        </div>
+    <div className="mt-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="flex items-center gap-2 text-sm text-naranja">
+          <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-naranja" />
+          {t.tarjeta.avisoSinPublicar}
+        </p>
+        <Boton onClick={publicar} cargando={publicando} className="sm:w-auto sm:shrink-0 sm:px-10">
+          {texto}
+        </Boton>
+      </div>
+      {falla && (
+        <p role="alert" className="mt-2 text-sm text-rojo">
+          {falla}
+        </p>
       )}
     </div>
   );
 }
 
-function Copiable({ etiqueta, valor, abrible = false }: { etiqueta: string; valor: string; abrible?: boolean }) {
-  const [copiado, setCopiado] = useState(false);
+// ── Recién creado ────────────────────────────────────────────
 
-  async function copiar() {
-    try {
-      await navigator.clipboard.writeText(valor);
-    } catch {
-      // Sin permiso de portapapeles: se selecciona para que el usuario copie.
-      window.prompt(etiqueta, valor);
-      return;
-    }
-    setCopiado(true);
-    window.setTimeout(() => setCopiado(false), 1500);
-  }
+/**
+ * Lo que se necesita de verdad al crear un evento: publicarlo, el QR para
+ * imprimir y cómo conectar la pantalla. Compartir arranca abierto: es lo que
+ * se viene a buscar después de crear.
+ */
+function RecienCreado({
+  evento,
+  verOrganizador,
+  onCambio,
+  onCerrar,
+}: {
+  evento: EventoAdmin;
+  verOrganizador: boolean;
+  onCambio: AlCambiar;
+  onCerrar: () => void;
+}) {
+  const idTitulo = useId();
+  const titulo = useRef<HTMLHeadingElement>(null);
+
+  // El foco va al evento nuevo: el navegador lo trae a la vista (en el celular
+  // queda debajo del formulario) y un lector de pantalla lo anuncia.
+  useEffect(() => {
+    titulo.current?.focus();
+  }, []);
 
   return (
-    <div className="min-w-0">
-      <p className="text-xs text-tenue">{etiqueta}</p>
-      <div className="flex flex-wrap items-center gap-2">
-        <code className="min-w-0 flex-1 basis-full truncate rounded-lg bg-hundido px-2 py-1 text-xs sm:basis-0">
-          {valor}
-        </code>
-        <button
-          onClick={copiar}
-          className="shrink-0 rounded-full border border-borde bg-panel px-3 py-1 text-xs hover:bg-white/15"
-        >
-          {copiado ? "Copiado" : "Copiar"}
-        </button>
-        {abrible && (
-          // Sin tele a mano, cualquier ventana hace de pantalla. Con nombre fijo,
-          // un segundo clic reusa la misma ventana en vez de abrir otra.
-          <button
-            onClick={() => window.open(valor, `pantalla-${valor}`, "popup,width=1280,height=720")}
-            className="shrink-0 rounded-full border border-borde bg-panel px-3 py-1 text-xs hover:bg-white/15"
+    <section aria-labelledby={idTitulo} className="mb-6 rounded-3xl border border-acento/70 bg-panel p-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-acento">{t.recienCreado.etiqueta}</p>
+          <h2
+            id={idTitulo}
+            ref={titulo}
+            tabIndex={-1}
+            className="break-words text-xl font-semibold leading-snug outline-none"
           >
-            Abrir en ventana
-          </button>
-        )}
+            {evento.nombre}
+          </h2>
+          <Datos evento={evento} verOrganizador={verOrganizador} />
+          <div className="mt-2">
+            <ChipEstado estado={evento.estado} />
+          </div>
+        </div>
+        <BotonChico onClick={onCerrar} className="shrink-0">
+          {t.recienCreado.cerrar}
+        </BotonChico>
       </div>
-    </div>
+
+      {evento.estado === "borrador" ? (
+        <Publicar evento={evento} texto={t.recienCreado.publicarAhora} onCambio={onCambio} />
+      ) : (
+        <p role="status" className="mt-4 text-sm font-medium text-verde">
+          {t.recienCreado.publicado}
+        </p>
+      )}
+
+      <CompartirEvento evento={evento} abiertoAlInicio qrGrande />
+    </section>
   );
 }

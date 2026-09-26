@@ -90,6 +90,18 @@ AGREGADOS = [
     # (create_slideshow) y el panel consulta hasta que está listo.
     ("GET", "/api/admin/eventos/{id_evento}/video"),
     ("POST", "/api/admin/eventos/{id_evento}/video"),
+    # Cuentas y roles (25-sep-2026). Hay admins, que ven todo, y organizadores,
+    # que ven sólo sus eventos. Las cuentas se piden solas desde el registro
+    # público y nacen pendientes hasta que un admin las habilita: así ningún
+    # admin crea cuentas con contraseña ni conoce contraseñas ajenas.
+    ("POST", "/api/cuentas/registro"),
+    # Quién tiene la sesión abierta: el panel lo necesita para saber si
+    # mostrar la pestaña de cuentas, que es sólo para admins.
+    ("GET", "/api/admin/yo"),
+    # Listar las cuentas con su historial y habilitarlas, darlas de baja,
+    # reactivarlas o cambiarles el rol. Dar de baja reemplaza a borrar.
+    ("GET", "/api/admin/cuentas"),
+    ("PATCH", "/api/admin/cuentas/{id_cuenta}"),
 ]
 
 
@@ -133,7 +145,8 @@ def test_no_hay_endpoints_inventados(cliente):
 
 
 def test_los_agregados_estan_publicados(cliente):
-    """Si alguno desaparece, la vinculación por código corto dejó de existir."""
+    """Si alguno desaparece, se perdió algo que se agregó a propósito: la
+    vinculación por código corto, el video o las cuentas."""
     rutas = rutas_publicadas(cliente)
     faltan = [x for x in AGREGADOS if x not in rutas]
     assert faltan == [], faltan
@@ -159,6 +172,32 @@ def test_el_esquema_de_error_es_uno_solo(cliente):
     assert set(detalle.keys()) == {"codigo", "mensaje"}
 
 
+def test_docs_no_promete_el_422_crudo_de_fastapi(cliente):
+    """La API responde {"error": {...}} también en un 422 (manejar_validacion).
+    /docs no puede documentar el {"detail": [...]} que FastAPI pone solo."""
+    esquema = cliente.get("/openapi.json").json()
+    assert "HTTPValidationError" not in esquema["components"]["schemas"]
+    crudos = [
+        f"{m.upper()} {ruta}"
+        for ruta, operaciones in esquema["paths"].items()
+        for m, op in operaciones.items()
+        if "422" in op.get("responses", {})
+        and op["responses"]["422"]["content"]["application/json"]["schema"]["$ref"]
+        != "#/components/schemas/RespuestaError"
+    ]
+    assert crudos == [], crudos
+
+
+def test_un_422_real_tiene_la_forma_del_contrato(cliente):
+    afirmar_error(cliente.post("/api/pantalla/canjear", json={}), "DATOS_INVALIDOS", 422)
+
+
+def test_la_descripcion_de_docs_no_es_la_de_la_fase_1(cliente):
+    descripcion = cliente.get("/openapi.json").json()["info"]["description"]
+    assert "Fase 1" not in descripcion
+    assert "datos fijos" not in descripcion
+
+
 # ─────────────────────────────────────────────────────────────
 # Autorización y errores que no dependen de la base
 # ─────────────────────────────────────────────────────────────
@@ -172,6 +211,12 @@ RUTAS_PROTEGIDAS = [
     ("patch", "/api/admin/fotos/1"),
     ("post", "/api/admin/fotos/lote"),
     ("get", "/api/admin/eventos/1/descarga"),
+    ("post", "/api/admin/eventos/1/vincular"),
+    ("get", "/api/admin/eventos/1/video"),
+    ("post", "/api/admin/eventos/1/video"),
+    ("get", "/api/admin/yo"),
+    ("get", "/api/admin/cuentas"),
+    ("patch", "/api/admin/cuentas/1"),
 ]
 
 

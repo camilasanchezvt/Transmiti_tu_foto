@@ -11,8 +11,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from app.models import Administrador, Evento
-from app.security import hashear_password
+from app.models import Evento
 from tests.conftest import EMAIL_ADMIN, PASSWORD_ADMIN, sin_base
 
 pytestmark = sin_base
@@ -183,29 +182,42 @@ def test_listado_trae_los_totales_por_estado(autorizado, db):
     assert (fila["aprobadas"], fila["pendientes"], fila["rechazadas"]) == (3, 2, 1)
 
 
-def test_un_admin_no_ve_los_eventos_de_otro(autorizado, db):
-    """El aislamiento no es sólo entre eventos: también entre administradores."""
-    autorizado.post("/api/admin/eventos", json={"nombre": "Mío", "fecha_evento": "2026-12-01"})
-
-    otro = Administrador(
-        email="otro@transmitifoto.test",
-        nombre="Otro",
-        password_hash=hashear_password("otra-clave-larga"),
+def test_un_organizador_no_ve_los_eventos_de_otro(autorizado_organizador, autorizado):
+    """El aislamiento no es sólo entre eventos: también entre cuentas. Ana es
+    admin y ve todo; Bruno es organizador y ve sólo lo suyo."""
+    autorizado_organizador.post(
+        "/api/admin/eventos", json={"nombre": "Mío", "fecha_evento": "2026-12-01"}
     )
-    db.add(otro)
-    db.commit()
-    db.add(
-        Evento(
-            admin_id=otro.id,
-            nombre="Ajeno",
-            fecha_evento="2026-12-02",
-            codigo_publico="zz99yy88",
-            token_pantalla="Z" * 32,
-            estado="activo",
-        )
-    )
-    db.commit()
+    autorizado.post("/api/admin/eventos", json={"nombre": "Ajeno", "fecha_evento": "2026-12-02"})
 
-    nombres = [e["nombre"] for e in autorizado.get("/api/admin/eventos").json()]
-    assert "Mío" in nombres
-    assert "Ajeno" not in nombres
+    nombres = [e["nombre"] for e in autorizado_organizador.get("/api/admin/eventos").json()]
+    assert nombres == ["Mío"]
+
+
+# ─────────────────────────────────────────────────────────────
+# Ids fuera de rango
+# ─────────────────────────────────────────────────────────────
+
+ENORME = 10**20  # no entra en bigint
+
+
+@pytest.mark.parametrize(
+    "metodo,ruta,cuerpo",
+    [
+        ("get", f"/api/admin/eventos/{ENORME}/resumen", None),
+        ("get", f"/api/admin/eventos?organizador={ENORME}", None),
+        ("patch", f"/api/admin/fotos/{ENORME}", {"estado": "aprobada"}),
+        ("patch", f"/api/admin/cuentas/{ENORME}", {"estado": "activa"}),
+        (
+            "post",
+            "/api/admin/eventos",
+            {"nombre": "x", "fecha_evento": "2026-12-01", "organizador_id": ENORME},
+        ),
+    ],
+)
+def test_un_id_que_no_entra_en_bigint_es_datos_invalidos(autorizado, metodo, ruta, cuerpo):
+    """Python no le pone tope a un int y Postgres sí: sin el manejador de
+    DataError, psycopg levanta una excepción y sale un 500."""
+    extra = {"json": cuerpo} if cuerpo is not None else {}
+    r = getattr(autorizado, metodo)(ruta, **extra)
+    afirmar_error(r, "DATOS_INVALIDOS", 422)

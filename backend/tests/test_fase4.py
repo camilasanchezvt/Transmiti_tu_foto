@@ -15,8 +15,7 @@ import zipfile
 import pytest
 from sqlalchemy import select
 
-from app.models import Administrador, Evento, Foto
-from app.security import hashear_password
+from app.models import Evento, Foto
 from tests.conftest import CODIGO_ACTIVO, sin_base, url_de
 
 pytestmark = sin_base
@@ -42,17 +41,11 @@ def test_resumen(autorizado, eventos):
     assert r.json() == {"pendientes": 2, "aprobadas": 6, "rechazadas": 1}
 
 
-def test_resumen_de_evento_ajeno(autorizado, eventos, db):
-    otro = Administrador(email="otro@t.test", nombre="Otro",
-                         password_hash=hashear_password("clave-larga-cualquiera"))
-    db.add(otro)
-    db.commit()
-    ajeno = Evento(admin_id=otro.id, nombre="Ajeno", fecha_evento="2026-12-02",
-                   codigo_publico="zz99yy88", token_pantalla="Z" * 32, estado="activo")
-    db.add(ajeno)
-    db.commit()
+def test_resumen_de_evento_ajeno(autorizado_organizador, eventos):
+    """Los eventos del fixture son de Ana: para Bruno, organizador, son ajenos."""
     afirmar_error(
-        autorizado.get(f"/api/admin/eventos/{ajeno.id}/resumen"), "EVENTO_NO_ENCONTRADO", 404
+        autorizado_organizador.get(f"/api/admin/eventos/{eventos['activo'].id}/resumen"),
+        "EVENTO_NO_ENCONTRADO", 404,
     )
 
 
@@ -138,26 +131,16 @@ def test_se_puede_revertir_un_rechazo(autorizado, eventos):
     assert r.json() == {"id": id_foto, "estado": "pendiente"}
 
 
-def test_no_se_puede_moderar_una_foto_ajena(autorizado, eventos, db):
-    otro = Administrador(email="otro2@t.test", nombre="Otro",
-                         password_hash=hashear_password("clave-larga-cualquiera"))
-    db.add(otro)
-    db.commit()
-    ajeno = Evento(admin_id=otro.id, nombre="Ajeno", fecha_evento="2026-12-02",
-                   codigo_publico="yy88xx77", token_pantalla="Y" * 32, estado="activo")
-    db.add(ajeno)
-    db.commit()
-    foto = Foto(evento_id=ajeno.id, public_id="eventos/yy88xx77/a", url=url_de("x"),
-                estado="pendiente")
-    db.add(foto)
-    db.commit()
+def test_no_se_puede_moderar_una_foto_ajena(autorizado_organizador, autorizado, eventos, db):
+    """Un organizador no modera fotos de un evento que no es suyo."""
+    id_foto = ids_por_estado(autorizado, eventos["activo"].id, "pendiente")[0]
 
     afirmar_error(
-        autorizado.patch(f"/api/admin/fotos/{foto.id}", json={"estado": "aprobada"}),
+        autorizado_organizador.patch(f"/api/admin/fotos/{id_foto}", json={"estado": "aprobada"}),
         "FOTO_NO_ENCONTRADA", 404,
     )
     db.expire_all()
-    assert db.scalar(select(Foto.estado).where(Foto.id == foto.id)) == "pendiente"
+    assert db.scalar(select(Foto.estado).where(Foto.id == id_foto)) == "pendiente"
 
 
 def test_foto_inexistente(autorizado, eventos):
@@ -188,28 +171,27 @@ def test_repetir_el_lote_no_afecta_nada(autorizado, eventos):
     assert r.json() == {"afectadas": 0}
 
 
-def test_el_lote_ignora_ids_ajenos_pero_modera_los_propios(autorizado, eventos, db):
+def test_el_lote_ignora_ids_ajenos_pero_modera_los_propios(
+    autorizado_organizador, organizador, autorizado, eventos, db
+):
     """Un id ajeno en la lista no puede impedir que se moderen los propios."""
-    otro = Administrador(email="otro3@t.test", nombre="Otro",
-                         password_hash=hashear_password("clave-larga-cualquiera"))
-    db.add(otro)
+    propio = Evento(usuario_id=organizador.id, nombre="De Bruno", fecha_evento="2026-12-02",
+                    codigo_publico="xx77ww66", token_pantalla="X" * 32, estado="activo")
+    db.add(propio)
     db.commit()
-    ajeno = Evento(admin_id=otro.id, nombre="Ajeno", fecha_evento="2026-12-02",
-                   codigo_publico="xx77ww66", token_pantalla="X" * 32, estado="activo")
-    db.add(ajeno)
-    db.commit()
-    foto_ajena = Foto(evento_id=ajeno.id, public_id="eventos/xx77ww66/a", url=url_de("x"),
-                      estado="pendiente")
-    db.add(foto_ajena)
+    for i in range(2):
+        db.add(Foto(evento_id=propio.id, public_id=f"eventos/xx77ww66/{i}", url=url_de("x"),
+                    estado="pendiente"))
     db.commit()
 
-    propias = ids_por_estado(autorizado, eventos["activo"].id, "pendiente")
-    r = autorizado.post(
-        "/api/admin/fotos/lote", json={"ids": propias + [foto_ajena.id], "estado": "aprobada"}
+    propias = ids_por_estado(autorizado_organizador, propio.id, "pendiente")
+    id_ajena = ids_por_estado(autorizado, eventos["activo"].id, "pendiente")[0]
+    r = autorizado_organizador.post(
+        "/api/admin/fotos/lote", json={"ids": propias + [id_ajena], "estado": "aprobada"}
     )
-    assert r.json() == {"afectadas": len(propias)}
+    assert r.json() == {"afectadas": 2}
     db.expire_all()
-    assert db.scalar(select(Foto.estado).where(Foto.id == foto_ajena.id)) == "pendiente"
+    assert db.scalar(select(Foto.estado).where(Foto.id == id_ajena)) == "pendiente"
 
 
 def test_lote_vacio_es_rechazado(autorizado, eventos):
@@ -368,17 +350,10 @@ def test_el_zip_se_arma_en_streaming(eventos):
     assert maximo_retenido < acumulado, "ningún pedazo contiene el ZIP entero"
 
 
-def test_descarga_de_evento_ajeno(autorizado, eventos, db):
-    otro = Administrador(email="otro4@t.test", nombre="Otro",
-                         password_hash=hashear_password("clave-larga-cualquiera"))
-    db.add(otro)
-    db.commit()
-    ajeno = Evento(admin_id=otro.id, nombre="Ajeno", fecha_evento="2026-12-02",
-                   codigo_publico="vv55uu44", token_pantalla="V" * 32, estado="activo")
-    db.add(ajeno)
-    db.commit()
+def test_descarga_de_evento_ajeno(autorizado_organizador, eventos):
     afirmar_error(
-        autorizado.get(f"/api/admin/eventos/{ajeno.id}/descarga"), "EVENTO_NO_ENCONTRADO", 404
+        autorizado_organizador.get(f"/api/admin/eventos/{eventos['activo'].id}/descarga"),
+        "EVENTO_NO_ENCONTRADO", 404,
     )
 
 

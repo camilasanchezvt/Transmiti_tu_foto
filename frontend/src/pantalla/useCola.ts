@@ -15,6 +15,14 @@ const ESPERAS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
 /** Cuánto dura la marca de "llegó una nueva". */
 const MARCA_MS = 4_000;
 
+/** Fundido entre fotos. Lo usa la pantalla para la transición. */
+export const FUNDIDO_MS = 700;
+
+/** Cuánto queda la foto que sale debajo de la que entra. Un poco más que el
+ *  fundido: la que entra arranca un cuadro después. Tiene que ser bastante
+ *  menos que el mínimo de segundos por foto (3 s), o se pisa con el avance. */
+const RETIRO_ANTERIOR_MS = FUNDIDO_MS + 300;
+
 const LIMITE_ARRANQUE = 40;
 
 /**
@@ -200,6 +208,8 @@ export function useCola(token: string): Cola {
       if (!hayFotos) {
         setHayFotos(true);
         indice.current = 0;
+        // Entra sola, desde el fondo: no hay de dónde fundir.
+        setAnterior(null);
         setFoto(buffer.current[0] ?? null);
       }
 
@@ -278,6 +288,7 @@ export function useCola(token: string): Cola {
         if (siguiente <= indice.current) indice.current--;
         if (buffer.current.length === 0) {
           setHayFotos(false);
+          setAnterior(null);
           setFoto(null);
           return;
         }
@@ -289,6 +300,19 @@ export function useCola(token: string): Cola {
       window.clearTimeout(id);
     };
   }, [segundosPorFoto, foto, hayFotos, avances]);
+
+  // ── La anterior se va cuando termina el fundido ─────────────
+  // La pantalla usa la foto como key de cada capa. Si la que salió se quedaba
+  // montada, volver a ella la reutilizaba ya visible y el cambio era un corte
+  // seco: con dos fotos pasaba en cada cambio, y con tres cuando la baraja la
+  // dejaba primera. Retirándola, la que entra siempre se monta de nuevo,
+  // transparente, y hace el fundido. De paso queda una sola capa desenfocada
+  // en vez de dos, que en la notebook del proyector se nota.
+  useEffect(() => {
+    if (!anterior) return;
+    const id = window.setTimeout(() => setAnterior(null), RETIRO_ANTERIOR_MS);
+    return () => window.clearTimeout(id);
+  }, [anterior]);
 
   return { cargando, error, datos, foto, anterior, hayFotos, sinConexion, llegaron };
 }

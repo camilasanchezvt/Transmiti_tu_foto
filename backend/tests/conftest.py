@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from datetime import date
+from functools import lru_cache
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import get_db
 from app.main import app
-from app.models import Administrador, Base, Evento, Foto
+from app.models import Base, Evento, Foto, Usuario
 from app.ratelimit import reiniciar as reiniciar_limite
 from app.security import hashear_password
 
@@ -30,6 +31,22 @@ sin_base = pytest.mark.skipif(
 
 EMAIL_ADMIN = "ana@transmitifoto.test"
 PASSWORD_ADMIN = "fiesta1234"
+
+EMAIL_SUPERADMIN = "sofia@transmitifoto.test"
+EMAIL_ORGANIZADOR = "bruno@transmitifoto.test"
+EMAIL_OTRO_ORGANIZADOR = "diego@transmitifoto.test"
+EMAIL_PENDIENTE = "carla@transmitifoto.test"
+EMAIL_BAJA = "ernesto@transmitifoto.test"
+# Todas las cuentas de prueba que no son la de Ana usan la misma contraseña.
+PASSWORD_CUENTA = "organiza1234"
+
+
+@lru_cache(maxsize=None)
+def hash_de(password: str) -> str:
+    """bcrypt tarda un cuarto de segundo a propósito. Hashear en cada prueba
+    sumaba medio minuto a la corrida; la misma contraseña da un hash que valida
+    igual, así que se calcula una vez."""
+    return hashear_password(password)
 
 
 @pytest.fixture(autouse=True)
@@ -70,13 +87,15 @@ def db(motor_prueba):
 
 @pytest.fixture()
 def limpiar(db):
-    """Deja sólo el administrador: cada prueba empieza sin eventos ni fotos."""
-    db.execute(text("TRUNCATE fotos, eventos, administradores RESTART IDENTITY CASCADE"))
+    """Deja sólo la cuenta de Ana, admin: cada prueba empieza sin eventos ni fotos."""
+    db.execute(text("TRUNCATE fotos, eventos, usuarios RESTART IDENTITY CASCADE"))
     db.add(
-        Administrador(
+        Usuario(
             email=EMAIL_ADMIN,
             nombre="Ana Moderadora",
-            password_hash=hashear_password(PASSWORD_ADMIN),
+            password_hash=hash_de(PASSWORD_ADMIN),
+            rol="admin",
+            estado="activa",
         )
     )
     db.commit()
@@ -101,15 +120,81 @@ def cliente_con_base(motor_prueba, limpiar):
     app.dependency_overrides.clear()
 
 
+def iniciar_sesion(cliente, email: str, password: str) -> str:
+    """Un login de verdad. Devuelve el token."""
+    r = cliente.post("/api/admin/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
+    return r.json()["token"]
+
+
 @pytest.fixture()
 def autorizado(cliente_con_base):
-    """El cliente con un Bearer real, sacado de un login de verdad."""
-    r = cliente_con_base.post(
-        "/api/admin/login", json={"email": EMAIL_ADMIN, "password": PASSWORD_ADMIN}
-    )
-    assert r.status_code == 200, r.text
-    cliente_con_base.headers.update({"Authorization": f"Bearer {r.json()['token']}"})
+    """El cliente con el Bearer de Ana, que es admin, sacado de un login de verdad."""
+    token = iniciar_sesion(cliente_con_base, EMAIL_ADMIN, PASSWORD_ADMIN)
+    cliente_con_base.headers.update({"Authorization": f"Bearer {token}"})
     return cliente_con_base
+
+
+# ─────────────────────────────────────────────────────────────
+# Cuentas: una superadmin, organizadores, una pendiente y una dada de baja
+# ─────────────────────────────────────────────────────────────
+
+def nueva_cuenta(db, email: str, nombre: str, rol: str = "organizador",
+                 estado: str = "activa", password: str = PASSWORD_CUENTA) -> Usuario:
+    cuenta = Usuario(email=email, nombre=nombre, password_hash=hash_de(password),
+                     rol=rol, estado=estado)
+    db.add(cuenta)
+    db.commit()
+    return cuenta
+
+
+@pytest.fixture()
+def organizador(limpiar) -> Usuario:
+    return nueva_cuenta(limpiar, EMAIL_ORGANIZADOR, "Bruno Organizador")
+
+
+@pytest.fixture()
+def otro_organizador(limpiar) -> Usuario:
+    return nueva_cuenta(limpiar, EMAIL_OTRO_ORGANIZADOR, "Diego Otro")
+
+
+@pytest.fixture()
+def cuenta_pendiente(limpiar) -> Usuario:
+    return nueva_cuenta(limpiar, EMAIL_PENDIENTE, "Carla Pendiente", estado="pendiente")
+
+
+@pytest.fixture()
+def cuenta_baja(limpiar) -> Usuario:
+    return nueva_cuenta(limpiar, EMAIL_BAJA, "Ernesto de Baja", estado="baja")
+
+
+@pytest.fixture()
+def superadmin(limpiar) -> Usuario:
+    return nueva_cuenta(limpiar, EMAIL_SUPERADMIN, "Sofía Superadmin", rol="superadmin")
+
+
+@pytest.fixture()
+def autorizado_superadmin(cliente_con_base, superadmin):
+    """Un cliente APARTE con el Bearer de Sofía, superadmin. Igual que el de
+    Bruno: otro TestClient, así convive con `autorizado` en la misma prueba."""
+    with TestClient(app) as c:
+        token = iniciar_sesion(c, EMAIL_SUPERADMIN, PASSWORD_CUENTA)
+        c.headers.update({"Authorization": f"Bearer {token}"})
+        yield c
+
+
+@pytest.fixture()
+def autorizado_organizador(cliente_con_base, organizador):
+    """Un cliente APARTE con el Bearer de Bruno, organizador.
+
+    Es otro TestClient y no el mismo con otro header: así una prueba puede usar
+    a la vez el de Ana (`autorizado`) y el de Bruno sin que uno pise al otro.
+    Comparte la base porque el reemplazo de get_db es de la app, no del cliente.
+    """
+    with TestClient(app) as c:
+        token = iniciar_sesion(c, EMAIL_ORGANIZADOR, PASSWORD_CUENTA)
+        c.headers.update({"Authorization": f"Bearer {token}"})
+        yield c
 
 
 # ─────────────────────────────────────────────────────────────
@@ -147,18 +232,20 @@ def url_real(indice: int) -> str:
 
 @pytest.fixture()
 def eventos(limpiar):
-    """Tres eventos —activo, cerrado y borrador— y las fotos del activo.
+    """Tres eventos de Ana —activo, cerrado y borrador— y las fotos del activo.
 
     El activo lleva 6 aprobadas, 2 pendientes y 1 rechazada. El cerrado lleva 2
     aprobadas, para poder comprobar que su pantalla sigue andando y que ninguna
     de esas fotos se filtra a la pantalla del otro.
+
+    Para un organizador, los tres son eventos ajenos.
     """
     db = limpiar
-    admin = db.scalar(select(Administrador).where(Administrador.email == EMAIL_ADMIN))
+    admin = db.scalar(select(Usuario).where(Usuario.email == EMAIL_ADMIN))
 
     def nuevo(nombre, codigo, token, estado, **extra):
         e = Evento(
-            admin_id=admin.id,
+            usuario_id=admin.id,
             nombre=nombre,
             fecha_evento=date(2026, 9, 12),
             codigo_publico=codigo,

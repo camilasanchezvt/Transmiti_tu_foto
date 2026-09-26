@@ -10,13 +10,21 @@ import { hashDelDispositivo } from "../lib/dispositivo";
 import { subirAcloudinary } from "../lib/subir";
 import { textos } from "./textos";
 
+/**
+ * Qué botón ofrece un error. `reintentar` vuelve a mandar la misma foto (se
+ * cortó la señal); `elegir`, otra (la que eligió no sirve); `ninguno` es para
+ * cuando no hay nada que hacer (ya mandó todas las que podía): un botón ahí
+ * sólo lleva a fallar otra vez después de comprimir.
+ */
+type AccionDeError = "reintentar" | "elegir" | "ninguno";
+
 type Estado =
   | { paso: "cargando" }
   | { paso: "bienvenida" }
   | { paso: "preparando" }
   | { paso: "subiendo"; porcentaje: number }
   | { paso: "listo" }
-  | { paso: "error"; mensaje: string; sePuedeReintentar: boolean };
+  | { paso: "error"; mensaje: string; accion: AccionDeError };
 
 /**
  * Los cuatro estados de la sección 6, en una sola pantalla y sin scroll.
@@ -29,6 +37,7 @@ export default function PaginaInvitado() {
 
   const [evento, setEvento] = useState<EventoPublico | null>(null);
   const [errorEvento, setErrorEvento] = useState<unknown>(null);
+  const [intentoCarga, setIntentoCarga] = useState(0);
   const [estado, setEstado] = useState<Estado>({ paso: "cargando" });
   const [nombre, setNombre] = useState("");
 
@@ -39,6 +48,7 @@ export default function PaginaInvitado() {
 
   useEffect(() => {
     let vigente = true;
+    setErrorEvento(null);
     publico
       .evento(codigo)
       .then((e) => {
@@ -50,7 +60,7 @@ export default function PaginaInvitado() {
     return () => {
       vigente = false;
     };
-  }, [codigo]);
+  }, [codigo, intentoCarga]);
 
   // Las vistas previas son URLs de objeto: si no se revocan, mandar diez fotos
   // seguidas deja diez blobs retenidos.
@@ -74,10 +84,10 @@ export default function PaginaInvitado() {
       await enviar(lista);
     } catch (error) {
       if (error instanceof ArchivoInvalido) {
-        setEstado({ paso: "error", mensaje: textos.errorArchivo, sePuedeReintentar: false });
+        setEstado({ paso: "error", mensaje: textos.errorArchivo, accion: "elegir" });
         return;
       }
-      setEstado({ paso: "error", mensaje: textos.errorRed, sePuedeReintentar: true });
+      setEstado({ paso: "error", mensaje: textos.errorRed, accion: "reintentar" });
     }
   }
 
@@ -109,6 +119,13 @@ export default function PaginaInvitado() {
       setFoto(null);
       setEstado({ paso: "listo" });
     } catch (error) {
+      // El evento terminó mientras elegía la foto: la pantalla de cierre, con
+      // el nombre del evento, en vez de un error con un botón que no sirve.
+      if (error instanceof ErrorApi && error.codigo === "EVENTO_CERRADO") {
+        setFoto(null);
+        setEvento({ ...evento, estado: "cerrado" });
+        return;
+      }
       setEstado(errorDeEnvio(error, evento));
     }
   }
@@ -120,24 +137,32 @@ export default function PaginaInvitado() {
           return {
             paso: "error",
             mensaje: textos.errorLimite(evento_.max_fotos_por_dispositivo),
-            sePuedeReintentar: false,
+            accion: "ninguno",
           };
-        case "EVENTO_CERRADO":
-          return { paso: "error", mensaje: textos.eventoCerrado, sePuedeReintentar: false };
+        case "DEMASIADOS_PEDIDOS":
+          return { paso: "error", mensaje: textos.errorMuchas, accion: "reintentar" };
         case "ARCHIVO_INVALIDO":
         case "PUBLIC_ID_AJENO":
-          return { paso: "error", mensaje: textos.errorArchivo, sePuedeReintentar: false };
+          return { paso: "error", mensaje: textos.errorArchivo, accion: "elegir" };
         default:
-          return { paso: "error", mensaje: textos.errorRed, sePuedeReintentar: true };
+          return { paso: "error", mensaje: textos.errorRed, accion: "reintentar" };
       }
     }
-    return { paso: "error", mensaje: textos.errorRed, sePuedeReintentar: true };
+    return { paso: "error", mensaje: textos.errorRed, accion: "reintentar" };
   }
 
   if (errorEvento) {
-    const mensaje =
-      errorEvento instanceof ErrorApi ? errorEvento.message : textos.errorRed;
-    return <Pantalla><p className="text-2xl leading-snug">{mensaje}</p></Pantalla>;
+    // Sin red o con el evento todavía sin publicar (responde igual que uno que
+    // no existe), probar de nuevo en un rato es lo que sirve: sin tener que
+    // volver a escanear el QR.
+    return (
+      <Pantalla>
+        <p className="text-2xl leading-snug">{mensajeDeCarga(errorEvento)}</p>
+        <Boton variante="secundario" onClick={() => setIntentoCarga((n) => n + 1)}>
+          {textos.botonReintentar}
+        </Boton>
+      </Pantalla>
+    );
   }
 
   if (!evento || estado.paso === "cargando") return <Cargando />;
@@ -211,7 +236,7 @@ export default function PaginaInvitado() {
 
       {estado.paso === "listo" && (
         <>
-          <p className="text-6xl" aria-hidden>✨</p>
+          <Tilde />
           <h1 className="text-3xl font-semibold">{textos.listoTitulo}</h1>
           <p className="text-xl text-tenue">{textos.listoDetalle}</p>
           <Boton onClick={() => entrada.current?.click()}>{textos.botonOtra}</Boton>
@@ -222,13 +247,13 @@ export default function PaginaInvitado() {
         <>
           <VistaPrevia foto={foto} />
           <p className="text-xl leading-snug">{estado.mensaje}</p>
-          {estado.sePuedeReintentar && foto ? (
+          {estado.accion === "reintentar" && foto ? (
             <Boton onClick={() => enviar(foto)}>{textos.botonReintentar}</Boton>
-          ) : (
+          ) : estado.accion !== "ninguno" ? (
             <Boton variante="secundario" onClick={() => entrada.current?.click()}>
               {textos.botonPrincipal}
             </Boton>
-          )}
+          ) : null}
         </>
       )}
     </Pantalla>
@@ -245,6 +270,31 @@ function Pantalla({ children }: { children: React.ReactNode }) {
         {children}
       </div>
     </main>
+  );
+}
+
+/** Si el evento no abre. */
+function mensajeDeCarga(error: unknown): string {
+  if (!(error instanceof ErrorApi) || error.esDeRed) return textos.errorCarga;
+  if (error.codigo === "EVENTO_NO_ENCONTRADO") return textos.eventoNoEncontrado;
+  return error.message;
+}
+
+/** El tilde verde de iOS y no un emoji: los emojis se ven distinto en cada
+ *  celular, y unas chispitas dicen poco de que la foto llegó. */
+function Tilde() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-16 w-16 text-verde" aria-hidden>
+      <circle cx="12" cy="12" r="12" fill="currentColor" />
+      <path
+        d="M7 12.4l3.3 3.3L17 9"
+        fill="none"
+        stroke="white"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

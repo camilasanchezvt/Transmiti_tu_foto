@@ -50,19 +50,9 @@ def test_generar_codigo_pide_sesion(cliente_con_base, eventos):
     afirmar_error(r, "NO_AUTORIZADO", 401)
 
 
-def test_no_se_vincula_un_evento_ajeno(autorizado, eventos, db):
-    from app.models import Administrador, Evento
-    from app.security import hashear_password
-
-    otro = Administrador(email="otro9@t.test", nombre="Otro",
-                         password_hash=hashear_password("clave-larga-cualquiera"))
-    db.add(otro)
-    db.commit()
-    ajeno = Evento(admin_id=otro.id, nombre="Ajeno", fecha_evento="2026-12-02",
-                   codigo_publico="qq11rr22", token_pantalla="Q" * 32, estado="activo")
-    db.add(ajeno)
-    db.commit()
-    afirmar_error(generar(autorizado, ajeno.id), "EVENTO_NO_ENCONTRADO", 404)
+def test_no_se_vincula_un_evento_ajeno(autorizado_organizador, eventos):
+    """Los eventos del fixture son de Ana: para Bruno, organizador, son ajenos."""
+    afirmar_error(generar(autorizado_organizador, eventos["activo"].id), "EVENTO_NO_ENCONTRADO", 404)
 
 
 def test_no_se_vincula_un_borrador(autorizado, eventos):

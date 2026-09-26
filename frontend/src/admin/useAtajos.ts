@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 
-export type Accion = "anterior" | "siguiente" | "aprobar" | "rechazar" | "deshacer";
+export type Accion = "anterior" | "siguiente" | "aprobar" | "rechazar" | "deshacer" | "cancelar";
 
 const TECLAS: Record<string, Accion> = {
   ArrowLeft: "anterior",
@@ -11,7 +11,14 @@ const TECLAS: Record<string, Accion> = {
   R: "rechazar",
   z: "deshacer",
   Z: "deshacer",
+  // Sale del modo de selección. Si hay un diálogo abierto, Escape nunca llega
+  // acá: Confirmar la frena antes, en document.
+  Escape: "cancelar",
 };
+
+/** Las únicas que pueden repetirse al dejar la tecla apretada: moverse rápido
+ *  por la fila está bien; aprobar treinta fotos por apoyar un dedo, no. */
+const REPETIBLES: ReadonlySet<Accion> = new Set(["anterior", "siguiente"]);
 
 /**
  * Teclado antes que mouse.
@@ -29,13 +36,23 @@ export function useAtajos(alActuar: (accion: Accion) => void, activo = true) {
       const destino = evento.target as HTMLElement | null;
       if (destino) {
         const etiqueta = destino.tagName;
-        if (etiqueta === "INPUT" || etiqueta === "TEXTAREA" || destino.isContentEditable) return;
+        if (
+          etiqueta === "INPUT" ||
+          etiqueta === "TEXTAREA" ||
+          etiqueta === "SELECT" ||
+          destino.isContentEditable
+        ) {
+          return;
+        }
       }
       if (evento.metaKey || evento.ctrlKey || evento.altKey) return;
 
       const accion = TECLAS[evento.key];
       if (!accion) return;
       evento.preventDefault();
+      // La repetición automática del sistema dispara ~30 pulsaciones por
+      // segundo: una A apoyada un segundo de más aprobaba media tanda.
+      if (evento.repeat && !REPETIBLES.has(accion)) return;
       alActuar(accion);
     };
 

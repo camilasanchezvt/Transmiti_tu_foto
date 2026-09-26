@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import { dibujarQR } from "../lib/qr";
+import { textos } from "./textos";
 
 interface Props {
   /** La URL completa que se codifica, no sólo el código. */
@@ -33,7 +34,10 @@ export default function QR({ url, lado, className = "" }: Props) {
     <canvas
       ref={lienzo}
       className={`rounded-2xl bg-white ${className}`}
-      aria-label="Código para mandar tu foto"
+      // Un <canvas> sin rol lo saltean los lectores de pantalla aunque tenga
+      // etiqueta: con role="img" se anuncia como imagen.
+      role="img"
+      aria-label={textos.qr}
     />
   );
 }

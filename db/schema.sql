@@ -2,17 +2,26 @@
 -- Se aplica automáticamente al levantar Postgres con docker compose
 -- (db/ está montado en /docker-entrypoint-initdb.d, y schema.sql corre antes que seed.sql).
 
-CREATE TABLE administradores (
+-- Las cuentas del panel. `superadmin` es la dueña de la app: todo lo de un
+-- admin y además gestiona a los admins; se nombra a mano con un UPDATE, nunca
+-- desde el panel. `admin` ve todo y gestiona organizadores; `organizador`, sólo
+-- sus eventos. Se crean desde el registro público y nacen `pendiente`: no
+-- entran hasta que un admin las habilita. Dar de baja es un estado, no un DELETE.
+CREATE TABLE usuarios (
   id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   email         text NOT NULL UNIQUE,
   nombre        text NOT NULL,
   password_hash text NOT NULL,
+  rol           text NOT NULL DEFAULT 'organizador'
+                CHECK (rol IN ('superadmin','admin','organizador')),
+  estado        text NOT NULL DEFAULT 'pendiente'
+                CHECK (estado IN ('pendiente','activa','baja')),
   creado_en     timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE eventos (
   id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  admin_id       bigint NOT NULL REFERENCES administradores(id),
+  usuario_id     bigint NOT NULL REFERENCES usuarios(id),
   nombre         text NOT NULL,
   fecha_evento   date NOT NULL,
   codigo_publico text NOT NULL UNIQUE,
@@ -45,7 +54,7 @@ CREATE TABLE fotos (
   nombre_invitado  text,
   subida_en        timestamptz NOT NULL DEFAULT now(),
   moderada_en      timestamptz,
-  moderada_por     bigint REFERENCES administradores(id)
+  moderada_por     bigint REFERENCES usuarios(id)
 );
 
 -- El índice del polling de la pantalla. Sin este, a las 200 fotos se arrastra.

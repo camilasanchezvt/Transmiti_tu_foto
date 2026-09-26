@@ -14,7 +14,6 @@ import hashlib
 import re
 import time
 import zipfile
-from urllib.parse import urlparse
 
 from .config import obtener_config
 from .errores import Codigo, ErrorApp
@@ -26,6 +25,9 @@ EXTENSIONES_PERMITIDAS = ("jpg", "jpeg", "png", "webp", "heic")
 TIPOS_PERMITIDOS = ("image/jpeg", "image/png", "image/webp", "image/heic")
 
 HOST_CLOUDINARY = "res.cloudinary.com"
+
+# Lo que va después de `eventos/{codigo}/` en un public_id.
+_SUFIJO_VALIDO = re.compile(r"[A-Za-z0-9_-]{1,100}")
 
 
 def carpeta_del_evento(codigo_publico: str) -> str:
@@ -69,36 +71,44 @@ def verificar_public_id(public_id: str, codigo_publico: str) -> None:
     if not public_id.startswith(prefijo):
         raise ErrorApp(Codigo.PUBLIC_ID_AJENO)
     resto = public_id[len(prefijo):]
-    # Ni vacío, ni con subcarpetas, ni saliendo de la carpeta por las suyas.
-    if not resto or "/" in resto or ".." in resto:
+    # Ni vacío, ni con subcarpetas, ni saliendo de la carpeta por las suyas: el
+    # sufijo que genera Cloudinary son letras y números. Con esto, además, el
+    # public_id se puede meter tal cual en el patrón de verificar_url.
+    if not _SUFIJO_VALIDO.fullmatch(resto):
         raise ErrorApp(Codigo.PUBLIC_ID_AJENO)
 
 
 def verificar_url(url: str, public_id: str) -> None:
-    """La URL tiene que ser una imagen de Cloudinary que corresponda al public_id.
+    """La URL tiene que ser EXACTAMENTE la de la imagen subida, sin agregados.
 
     El brief sólo pide verificar el public_id, pero el campo que después se
-    proyecta es `url`. Si se aceptara cualquier URL, un public_id válido
-    alcanzaría para hacer aparecer en la pantalla una imagen alojada en otra
-    cuenta de Cloudinary: la verificación de carpeta quedaría sin efecto.
+    proyecta es `url`. Por eso se exige la forma que devuelve Cloudinary al
+    subir, y nada más:
+
+        https://res.cloudinary.com/{cloud}/image/upload/v{version}/{public_id}.{ext}
+
+    Antes alcanzaba con que `/image/upload/` y el public_id aparecieran en algún
+    lugar de la ruta, y pasaban cosas como éstas:
+
+    - `.../upload/l_fetch:.../eventos/X/a.jpg`: tapa la foto con una imagen de
+      afuera. Lo mismo cualquier otra transformación.
+    - `.../upload/d_eventos:otro:foto.jpg/eventos/X/noexiste.jpg`: muestra la
+      imagen por defecto, que es de otro evento.
+    - `.../upload/v1/eventos/X/a/../../../../otracuenta/image/upload/b.jpg`: el
+      navegador resuelve los `..` y carga una imagen de OTRA cuenta de
+      Cloudinary, que su dueño puede cambiar después de que la aprueben.
+
+    Sin CLOUDINARY_CLOUD_NAME (desarrollo, pruebas) se acepta cualquier nombre
+    de cuenta bien formado; en producción la configuración lo exige.
     """
-    partes = urlparse(url)
-    if partes.scheme != "https" or partes.hostname != HOST_CLOUDINARY:
-        raise ErrorApp(Codigo.ARCHIVO_INVALIDO)
-
-    if "/image/upload/" not in partes.path:
+    nube = re.escape(config.CLOUDINARY_CLOUD_NAME) if config.CLOUDINARY_CLOUD_NAME else r"[A-Za-z0-9_-]+"
+    extensiones = "|".join(EXTENSIONES_PERMITIDAS)
+    patron = (
+        rf"https://{re.escape(HOST_CLOUDINARY)}/{nube}/image/upload/"
+        rf"(?:v\d+/)?{re.escape(public_id)}\.(?i:{extensiones})"
+    )
+    if not re.fullmatch(patron, url):
         # /video/upload/ y /raw/upload/ quedan afuera: sólo imágenes.
-        raise ErrorApp(Codigo.ARCHIVO_INVALIDO)
-
-    if config.CLOUDINARY_CLOUD_NAME:
-        if not partes.path.startswith(f"/{config.CLOUDINARY_CLOUD_NAME}/"):
-            raise ErrorApp(Codigo.ARCHIVO_INVALIDO)
-
-    if public_id not in partes.path:
-        raise ErrorApp(Codigo.ARCHIVO_INVALIDO)
-
-    extension = partes.path.rsplit(".", 1)[-1].lower()
-    if extension not in EXTENSIONES_PERMITIDAS:
         raise ErrorApp(Codigo.ARCHIVO_INVALIDO)
 
 

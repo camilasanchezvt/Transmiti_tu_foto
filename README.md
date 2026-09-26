@@ -105,7 +105,20 @@ El seed deja cargados los casos que rompen las pantallas: fotos verticales,
 horizontales, cuadradas y panorámicas; nombres con acentos y ñ, uno vacío y
 tres sin nombre; y fotos repartidas a lo largo de dos horas.
 
-**Administrador:** `ana@transmitifoto.test` / `fiesta1234`
+**Cuentas**, las cuatro con la contraseña `fiesta1234`:
+
+| Email | Rol y estado | Qué ve |
+|---|---|---|
+| `sofia@transmitifoto.test` | superadmin, activa | lo de Ana, y además gestiona a los admins |
+| `ana@transmitifoto.test` | admin, activa | todos los eventos y la pestaña Cuentas |
+| `bruno@transmitifoto.test` | organizador, activa | sólo el suyo, *Cumple de 15 de Malena*, que está en Historial |
+| `carla@transmitifoto.test` | organizador, pendiente | no puede entrar hasta que un admin la habilite |
+
+Las cuentas nuevas se piden solas en `/admin/registro` y esperan a que un admin
+las habilite desde Cuentas. `backend/crear_admin.py` sólo hace falta para la
+primera cuenta de una base vacía; pregunta el rol (superadmin por defecto). Para
+nombrar superadmin a una cuenta existente, ver *Nombrar un superadmin* en la
+sección 5 de `CONSTRUIR-APP.md`.
 
 | Evento | Estado | Código público | Token de pantalla |
 |---|---|---|---|
@@ -135,6 +148,10 @@ Rutas útiles una vez que exista el frontend:
     /p/64syPN4YFgbJibLfIOlrjI51R0HFlKDm           # pantalla, evento activo
     /p/8MX4OqECds7IhkCmlK7vub76PntouGz1           # pantalla, evento cerrado
     /admin/login                                  # panel
+    /admin/registro                               # pedir una cuenta
+    /admin                                        # eventos vigentes
+    /admin/historial                              # terminados o de fecha pasada
+    /admin/cuentas                                # sólo admin
 
 ### Sobre las imágenes del seed
 
@@ -154,9 +171,10 @@ Fase 4 es que el ZIP tiene que armarse descargando `url`, no resolviendo
 ## Vincular una tele
 
 El link de la pantalla mide 68 caracteres y no se puede tipear con un control
-remoto. Para eso está el código corto: en el panel, al lado del link de la
-pantalla, hay un botón que genera **seis dígitos**. En la tele se abre `/p` y se
-cargan ahí. Dura diez minutos y sirve una sola vez.
+remoto. Para eso está el código corto: en el panel, en la tarjeta del evento,
+**Compartir y pantalla → Conectar la pantalla → En una tele → Conectar con
+código** genera **seis dígitos**. En la tele se abre `/p` y se cargan ahí. Dura
+diez minutos y sirve una sola vez.
 
 La tele recuerda la vinculación, así que reiniciarla no obliga a repetirla.
 

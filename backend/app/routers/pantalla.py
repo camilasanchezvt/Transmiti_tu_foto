@@ -16,7 +16,7 @@ from ..database import get_db
 from ..deps import evento_por_token
 from ..errores import Codigo, ErrorApp
 from ..models import Evento, Foto
-from ..ratelimit import permitido
+from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido
 from ..schemas import (
     ColaPantalla,
     FotoPantalla,
@@ -123,10 +123,12 @@ def canjear(pedido: PedidoCanje, request: Request) -> TokenDePantalla:
     El límite de pedidos es lo que hace que un código de seis dígitos alcance:
     con 30 intentos cada 10 minutos por IP contra un millón de combinaciones, la
     probabilidad de acertar dentro de la ventana de vida del código es de 0,003%.
+    Por eso la IP sale de `ip_del_pedido`, que no le cree al cliente: con la
+    IP que el cliente elige, el tope no frena a nadie.
     """
-    ip = _ip_del_pedido(request)
-    if not permitido(ip, "canje-de-pantalla"):
+    if not permitido(ip_del_pedido(request), "canje-de-pantalla"):
         raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS)
+    limpiar_cada_tanto()
 
     token = vinculacion.canjear(pedido.codigo)
     if token is None:
@@ -134,11 +136,3 @@ def canjear(pedido: PedidoCanje, request: Request) -> TokenDePantalla:
         # distinguirlos le diría a quien prueba al azar cuándo estuvo cerca.
         raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO, "Ese código no sirve. Generá uno nuevo")
     return TokenDePantalla(token_pantalla=token)
-
-
-def _ip_del_pedido(request: Request) -> str:
-    """Detrás del proxy de Render, request.client.host es el proxy."""
-    reenviada = request.headers.get("x-forwarded-for")
-    if reenviada:
-        return reenviada.split(",")[0].strip()
-    return request.client.host if request.client else "desconocida"

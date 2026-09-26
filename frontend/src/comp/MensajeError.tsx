@@ -1,5 +1,6 @@
 import { ErrorApi } from "../api/client";
 import Boton from "./Boton";
+import { textosBase } from "./textos";
 
 interface Props {
   error: unknown;
@@ -11,10 +12,7 @@ interface Props {
  * escritos para que el invitado los lea tal cual, así que no se reescriben acá.
  */
 export default function MensajeError({ error, onReintentar }: Props) {
-  const mensaje =
-    error instanceof ErrorApi
-      ? error.message
-      : "Algo salió mal. Probá de nuevo";
+  const mensaje = error instanceof ErrorApi ? error.message : textosBase.errorGenerico;
 
   return (
     <div className="flex flex-col items-center gap-6 p-8 text-center">
@@ -22,7 +20,7 @@ export default function MensajeError({ error, onReintentar }: Props) {
       {onReintentar && (
         <div className="w-full max-w-xs">
           <Boton variante="secundario" onClick={onReintentar}>
-            Probar de nuevo
+            {textosBase.probarDeNuevo}
           </Boton>
         </div>
       )}

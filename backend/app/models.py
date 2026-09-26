@@ -4,7 +4,8 @@ Convenciones de la sección 4 de CONSTRUIR-APP.md:
 - Todas las marcas de tiempo son timestamptz. Nunca timestamp pelado: el
   servidor está en UTC y el evento en Argentina.
 - Los estados son text con CHECK, no tipos ENUM.
-- Nada se borra: una foto rechazada sigue existiendo y se puede revertir.
+- Nada se borra: una foto rechazada sigue existiendo y se puede revertir. Una
+  cuenta tampoco se borra: se da de baja, y sus eventos y fotos quedan.
 """
 
 from __future__ import annotations
@@ -28,24 +29,53 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 ESTADOS_EVENTO = ("borrador", "activo", "cerrado")
 ESTADOS_FOTO = ("pendiente", "aprobada", "rechazada")
+ROLES_USUARIO = ("superadmin", "admin", "organizador")
+ESTADOS_CUENTA = ("pendiente", "activa", "baja")
 
 
 class Base(DeclarativeBase):
     pass
 
 
-class Administrador(Base):
-    __tablename__ = "administradores"
+class Usuario(Base):
+    """Una cuenta del panel.
+
+    `superadmin` es la dueña de la app: puede todo lo que puede un admin y además
+    gestiona a los admins. `admin` ve todos los eventos y todas las cuentas, y
+    gestiona las de organizador; `organizador`, sólo ve sus eventos. El
+    superadmin no se asigna desde el panel: se nombra a mano con un UPDATE en la
+    base.
+
+    Las cuentas se crean desde el registro público y nacen `pendiente`: no
+    entran hasta que un admin las pasa a `activa`. Dar de baja es un estado, no
+    un DELETE: los eventos y las fotos de la cuenta quedan.
+    """
+
+    __tablename__ = "usuarios"
+    __table_args__ = (
+        CheckConstraint(
+            "rol IN ('superadmin','admin','organizador')", name="usuarios_rol_check"
+        ),
+        CheckConstraint(
+            "estado IN ('pendiente','activa','baja')", name="usuarios_estado_check"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
     email: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     nombre: Mapped[str] = mapped_column(Text, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    rol: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'organizador'")
+    )
+    estado: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'pendiente'")
+    )
     creado_en: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
-    eventos: Mapped[list["Evento"]] = relationship(back_populates="admin")
+    eventos: Mapped[list["Evento"]] = relationship(back_populates="usuario")
 
 
 class Evento(Base):
@@ -60,8 +90,9 @@ class Evento(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
-    admin_id: Mapped[int] = mapped_column(
-        BigInteger, ForeignKey("administradores.id"), nullable=False
+    # El dueño del evento. Un organizador sólo ve los eventos donde es el dueño.
+    usuario_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("usuarios.id"), nullable=False
     )
     nombre: Mapped[str] = mapped_column(Text, nullable=False)
     fecha_evento: Mapped[date] = mapped_column(Date, nullable=False)
@@ -94,7 +125,7 @@ class Evento(Base):
     video_fotos: Mapped[int | None] = mapped_column(Integer)
     video_pedido_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    admin: Mapped[Administrador] = relationship(back_populates="eventos")
+    usuario: Mapped[Usuario] = relationship(back_populates="eventos")
     fotos: Mapped[list["Foto"]] = relationship(
         back_populates="evento", cascade="all, delete-orphan"
     )
@@ -140,7 +171,7 @@ class Foto(Base):
     )
     moderada_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     moderada_por: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("administradores.id")
+        BigInteger, ForeignKey("usuarios.id")
     )
 
     evento: Mapped[Evento] = relationship(back_populates="fotos")
