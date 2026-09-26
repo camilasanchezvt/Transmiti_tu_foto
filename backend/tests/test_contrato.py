@@ -106,6 +106,21 @@ AGREGADOS = [
     # "nada se borra", sólo para superadmins. Sus eventos pasan a quien la
     # elimina, y el email de la cuenta se confirma en el cuerpo, no en la URL.
     ("DELETE", "/api/admin/cuentas/{id_cuenta}"),
+    # Olvidé mi contraseña (26-sep-2026): sin sesión. `recuperar` manda un link
+    # por email (Brevo) y responde siempre lo mismo, exista o no la cuenta;
+    # `restablecer` canjea el token del link por una contraseña nueva y cierra
+    # todas las sesiones de la cuenta.
+    ("POST", "/api/cuentas/recuperar"),
+    ("POST", "/api/cuentas/restablecer"),
+    # Mi cuenta (26-sep-2026): cada cuenta cambia su nombre, su tema del panel
+    # y los predeterminados de sus eventos nuevos; su contraseña (con la
+    # actual; devuelve una sesión nueva), y su avatar, que el navegador sube
+    # directo a Cloudinary con una firma, como las fotos de los invitados.
+    ("PATCH", "/api/admin/yo"),
+    ("POST", "/api/admin/yo/contrasena"),
+    ("POST", "/api/admin/yo/avatar/firma"),
+    ("PUT", "/api/admin/yo/avatar"),
+    ("POST", "/api/admin/yo/avatar/quitar"),
 ]
 
 
@@ -150,7 +165,8 @@ def test_no_hay_endpoints_inventados(cliente):
 
 def test_los_agregados_estan_publicados(cliente):
     """Si alguno desaparece, se perdió algo que se agregó a propósito: la
-    vinculación por código corto, el video, las cuentas o eliminarlas."""
+    vinculación por código corto, el video, las cuentas, eliminarlas, recuperar
+    la contraseña o Mi cuenta."""
     rutas = rutas_publicadas(cliente)
     faltan = [x for x in AGREGADOS if x not in rutas]
     assert faltan == [], faltan
@@ -222,6 +238,11 @@ RUTAS_PROTEGIDAS = [
     ("get", "/api/admin/cuentas"),
     ("patch", "/api/admin/cuentas/1"),
     ("delete", "/api/admin/cuentas/1"),
+    ("patch", "/api/admin/yo"),
+    ("post", "/api/admin/yo/contrasena"),
+    ("post", "/api/admin/yo/avatar/firma"),
+    ("put", "/api/admin/yo/avatar"),
+    ("post", "/api/admin/yo/avatar/quitar"),
 ]
 
 

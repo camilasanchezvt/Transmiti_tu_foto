@@ -37,6 +37,7 @@ from tests.conftest import (
 )
 from tests.test_cuentas import (
     SOBRE_UN_EVENTO,
+    YO_POR_DEFECTO,
     afirmar_error,
     con_fotos,
     fotos_de,
@@ -294,7 +295,7 @@ def test_un_superadmin_entra_y_yo_dice_su_rol(autorizado_superadmin, superadmin)
     r = autorizado_superadmin.get("/api/admin/yo")
     assert r.status_code == 200
     assert r.json() == {"id": superadmin.id, "email": EMAIL_SUPERADMIN,
-                        "nombre": "Sofía Superadmin", "rol": "superadmin"}
+                        "nombre": "Sofía Superadmin", "rol": "superadmin", **YO_POR_DEFECTO}
 
 
 def test_un_superadmin_ve_las_cuentas_y_los_superadmins_figuran(autorizado,

@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { ErrorApi, admin, tokenDeSesion } from "../api/client";
+import {
+  ErrorApi,
+  admin,
+  alAdoptarToken,
+  alRenovarToken,
+  perdioLaSesion,
+  tokenDeSesion,
+} from "../api/client";
 import type { UsuarioYo } from "../api/tipos";
+import { aplicarTema } from "../lib/tema";
 
 /**
  * Quién está usando el panel, pedido UNA vez por sesión.
@@ -14,6 +22,10 @@ import type { UsuarioYo } from "../api/tipos";
  * El caché vive en el módulo y está atado al token: si alguien sale y entra con
  * otra cuenta, el token cambia y se vuelve a preguntar. Así nunca se muestra el
  * nombre ni los permisos de la sesión anterior.
+ *
+ * Cada vez que llega la cuenta se aplica su tema: la copia local ya pintó el
+ * primer cuadro, y esto la confirma o la corrige (otra persona usó este
+ * navegador, o se cambió desde otro dispositivo).
  */
 interface EnMemoria {
   token: string;
@@ -41,7 +53,9 @@ function pedirYo(token: string, mientras: UsuarioYo | null = null): Promise<Usua
   pedido.then(
     (usuario) => {
       entrada.usuario = usuario;
-      if (enMemoria === entrada) oyentes.forEach((avisar) => avisar());
+      if (enMemoria !== entrada) return;
+      aplicarTema(usuario.tema);
+      oyentes.forEach((avisar) => avisar());
     },
     () => {
       if (enMemoria !== entrada) return;
@@ -73,7 +87,45 @@ export function revalidarSesion(): void {
   pedirYo(token, anterior).catch(() => {});
 }
 
-/** Para "Salir": olvida quién era y borra el token. Después, navegá al login. */
+// Cambiar la contraseña trae un token nuevo para la MISMA cuenta: lo que se
+// sabía sigue valiendo, sólo cambia la llave. Sin esto, el panel entero
+// volvería a "cargando" y a preguntar /yo.
+alRenovarToken((anterior, nuevo) => {
+  if (enMemoria && enMemoria.token === anterior) enMemoria = { ...enMemoria, token: nuevo };
+});
+
+// Esta pestaña tomó el token que guardó otra (ver client.ts): casi siempre la
+// misma cuenta, que cambió la contraseña allá, pero puede ser otra que entró
+// en esa pestaña. No hay forma de saberlo sin preguntar: se vuelve a pedir /yo
+// y, mientras llega, se sigue mostrando lo que había, como en revalidarSesion.
+// Si esta pestaña todavía no había preguntado quién es (el login, o una página
+// del invitado abierta en el mismo navegador), no hay nada que corregir: la
+// próxima vez que el panel pregunte, lo hará con el token nuevo.
+alAdoptarToken((anterior, nuevo) => {
+  const actual = enMemoria;
+  if (!actual || actual.token !== anterior) return;
+  enMemoria = null;
+  pedirYo(nuevo, actual.usuario).catch(() => {});
+});
+
+/**
+ * Para Mi cuenta: después de admin.actualizarYo, guardarAvatar o quitarAvatar,
+ * pasale la cuenta que devolvió el backend. La barra, el avatar y el tema se
+ * actualizan en el acto en todas las piezas montadas, sin volver a preguntar.
+ *
+ *   const cuenta = await admin.actualizarYo({ tema: "claro" });
+ *   actualizarUsuarioEnSesion(cuenta);
+ */
+export function actualizarUsuarioEnSesion(usuario: UsuarioYo): void {
+  const token = tokenDeSesion();
+  if (!token) return;
+  enMemoria = { token, pedido: Promise.resolve(usuario), usuario };
+  aplicarTema(usuario.tema);
+  oyentes.forEach((avisar) => avisar());
+}
+
+/** Para "Salir": olvida quién era y borra el token de esta pestaña (la copia
+ *  guardada, sólo si otra pestaña no la renovó). Después, navegá al login. */
 export function olvidarSesion(): void {
   enMemoria = null;
   admin.salir();
@@ -85,13 +137,20 @@ export function olvidarSesion(): void {
  * login y devuelve true, así quien llama no muestra el error. Un 403 NO entra:
  * también viaja con NO_AUTORIZADO, pero es falta de permiso, no de sesión.
  *
+ * Tampoco entra un 401 con un token que otra pestaña ya reemplazó (cambió la
+ * contraseña o volvió a entrar): la sesión sigue con el token nuevo, así que
+ * ni se olvida ni se va al login. Antes, ese 401 borraba del navegador justo
+ * el token nuevo, y la otra pestaña caía en el login al recargar. Casi nunca
+ * llega hasta acá, porque el cliente ya repite el pedido con el token nuevo;
+ * si llega, devuelve false: quien llama muestra su error y reintentar anda.
+ *
  *   catch (e) { if (!alPerderSesion(e)) setError(e); }
  */
 export function useAlPerderSesion(): (error: unknown) => boolean {
   const navegar = useNavigate();
   return useCallback(
     (error: unknown) => {
-      if (!(error instanceof ErrorApi && error.esSinSesion)) return false;
+      if (!(error instanceof ErrorApi && perdioLaSesion(error))) return false;
       olvidarSesion();
       navegar("/admin/login", { replace: true });
       return true;

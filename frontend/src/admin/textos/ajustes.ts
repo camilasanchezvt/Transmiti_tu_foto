@@ -7,6 +7,7 @@
 // Descargar, Revisar fotos, Guardar…) viven en comun.ts; acá, lo propio.
 
 import { comun } from "./comun";
+import { estiloPantalla } from "./estiloPantalla";
 
 /** "45 s", "1 min", "7 min 30 s". Sin espacios que corten: la duración va
  *  dentro de un botón y en un celular no puede partirse en "7 min" / "30 s". */
@@ -65,6 +66,27 @@ export const ajustes = {
   cupoMenos: "Una foto menos",
   cupoMas: "Una foto más",
   fueraDeRango: (min: number, max: number) => `Tiene que ser entre ${min} y ${max}.`,
+
+  // Estilo de la pantalla. Cada control se guarda al tocarlo, como en los
+  // Ajustes de iOS: no hay botón Guardar. Los nombres y las ayudas de cada
+  // control (fondo, cambio de foto, nombre, QR) vienen de estiloPantalla.ts,
+  // los mismos que en Mi cuenta.
+  estiloTitulo: "Estilo de la pantalla",
+  estiloDetalle: "Se guarda al tocarlo. La pantalla lo toma sola, sin recargarla.",
+  guardando: "Guardando…",
+  ...estiloPantalla,
+
+  /** "Cambia sólo este evento. Los nuevos arrancan con lo que elijas en
+   *  [Mi cuenta]." El link lleva a /admin/cuenta. Escrito acá y no importado
+   *  de cuenta.ts: este archivo y ese no se importan entre sí (un import de
+   *  ida y vuelta entre textos se rompe al cargar), y lo que comparten vive
+   *  en estiloPantalla.ts. Si allá cambia el nombre de la página, cambiarlo
+   *  también acá. */
+  predeterminados: {
+    antes: "Cambia sólo este evento. Los nuevos arrancan con lo que elijas en ",
+    enlace: "Mi cuenta",
+    despues: ".",
+  },
 
   compartirTitulo: "Compartir y pantalla",
   compartirDetalle: "El QR para imprimir, el link para invitados y cómo conectar la pantalla.",

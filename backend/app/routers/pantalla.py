@@ -32,7 +32,9 @@ from ..schemas import (
 router = APIRouter(prefix="/api/pantalla", tags=["pantalla"])
 
 # No son columnas de la tabla `eventos`: son constantes del servidor. De la base
-# sale sólo `segundos_por_foto`.
+# salen `segundos_por_foto` y el estilo de la pantalla (fondo, transición y si
+# muestra el nombre y el QR): la pantalla los relee en cada pasada de polling,
+# así un cambio desde el panel le llega sin recargarla.
 INTERVALO_POLLING_MS = 6000
 MAXIMO_BUFFER = 200
 
@@ -63,6 +65,10 @@ def obtener_pantalla(evento: Evento = Depends(evento_por_token)) -> Pantalla:
             segundos_por_foto=evento.segundos_por_foto,
             intervalo_polling_ms=INTERVALO_POLLING_MS,
             maximo_buffer=MAXIMO_BUFFER,
+            fondo=evento.pantalla_fondo,
+            transicion=evento.pantalla_transicion,
+            mostrar_nombre=evento.pantalla_mostrar_nombre,
+            mostrar_qr=evento.pantalla_mostrar_qr,
         ),
     )
 

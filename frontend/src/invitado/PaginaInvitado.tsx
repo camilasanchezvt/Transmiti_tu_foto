@@ -212,7 +212,7 @@ export default function PaginaInvitado() {
               onChange={(e) => setNombre(e.target.value)}
               placeholder={textos.ejemploNombre}
               maxLength={80}
-              className="mt-1 min-h-boton w-full rounded-2xl border border-borde bg-hundido px-4 text-lg text-white outline-none focus:border-acento"
+              className="mt-1 min-h-boton w-full rounded-2xl border border-borde bg-hundido px-4 text-lg text-texto outline-none focus:border-acento"
             />
           </label>
           <Boton icono={CameraIcon} onClick={() => entrada.current?.click()}>

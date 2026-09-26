@@ -6,9 +6,9 @@ import { claseIconoChico, type Icono } from "./icono";
 export type VarianteChica = "vidrio" | "azul" | "peligro";
 
 const ESTILOS: Record<VarianteChica, string> = {
-  vidrio: "border border-borde bg-panel text-white hover:bg-white/15",
-  azul: "bg-acento text-white hover:brightness-110 active:brightness-90",
-  peligro: "border border-borde bg-panel text-rojo hover:bg-white/15",
+  vidrio: "border border-borde bg-panel text-texto hover:bg-pulsado",
+  azul: "bg-acento text-luz hover:brightness-110 active:brightness-90",
+  peligro: "border border-borde bg-panel text-rojo-tinta hover:bg-pulsado",
 };
 
 /**

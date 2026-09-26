@@ -5,7 +5,9 @@
 // solo tipo de excepción y las pantallas nunca leen `response.json()` a mano.
 
 import type {
+  AvatarNuevo,
   CambioCuenta,
+  CambioYo,
   ColaPantalla,
   CodigoError,
   CodigoVinculacion,
@@ -25,9 +27,14 @@ import type {
   ListaFotosAdmin,
   Pantalla,
   PedidoEliminarCuenta,
+  PedidoCambioContrasena,
   PedidoLogin,
+  PedidoRecuperar,
   PedidoRegistro,
+  PedidoRestablecer,
+  RespuestaRecuperar,
   RespuestaRegistro,
+  RespuestaRestablecer,
   ResultadoLote,
   Resumen,
   Salud,
@@ -78,11 +85,33 @@ export class ErrorApi extends Error {
   }
 }
 
+// ── La sesión del panel ──────────────────────────────────────
+//
+// El token vive en memoria (tokenAdmin) y tiene una copia en localStorage,
+// compartida por todas las pestañas del navegador. Con dos pestañas abiertas,
+// la copia puede ser más nueva que lo que tiene en memoria una de ellas: al
+// cambiar la contraseña, la pestaña A guarda un token nuevo y el de la pestaña
+// B deja de servir. Tres reglas evitan que B, con su 401, le borre a A la
+// sesión que acaba de renovar:
+//
+// 1. B toma el token guardado apenas cambia (evento `storage`).
+// 2. Si igual le llega un 401 con el viejo, lo toma ahí y repite el pedido.
+// 3. Olvidar la sesión borra la copia sólo si es la de esta pestaña.
+//
+// Efecto buscado: el navegador tiene UNA sesión, la última guardada. Si en
+// otra pestaña se entra con otra cuenta, ésta pasa a esa cuenta también (igual
+// que al recargar). No abre ningún acceso nuevo: los dos tokens ya estaban en
+// este navegador. useSesion vuelve a preguntar quién es (alAdoptarToken), así
+// el nombre, el rol y el tema que se muestran son los de la cuenta nueva.
+
+const CLAVE_TOKEN = "transmiti.token";
+
 let tokenAdmin: string | null = leerTokenGuardado();
 
-function leerTokenGuardado(): string | null {
+/** La copia guardada del token, la que comparten todas las pestañas. */
+export function leerTokenGuardado(): string | null {
   try {
-    return window.localStorage.getItem("transmiti.token");
+    return window.localStorage.getItem(CLAVE_TOKEN);
   } catch {
     // Modo privado en iOS: localStorage tira. No es motivo para no andar.
     return null;
@@ -90,13 +119,100 @@ function leerTokenGuardado(): string | null {
 }
 
 export function guardarToken(token: string | null): void {
+  const anterior = tokenAdmin;
   tokenAdmin = token;
   try {
-    if (token) window.localStorage.setItem("transmiti.token", token);
-    else window.localStorage.removeItem("transmiti.token");
+    if (token) window.localStorage.setItem(CLAVE_TOKEN, token);
+    // Salir, o una sesión que murió: se borra la copia sólo si todavía es la
+    // de esta pestaña. Si otra ya guardó una más nueva, ésa queda.
+    else if (leerTokenGuardado() === anterior) window.localStorage.removeItem(CLAVE_TOKEN);
   } catch {
     /* la sesión vive sólo en memoria */
   }
+}
+
+type AlAdoptar = (anterior: string, nuevo: string) => void;
+const alAdoptar = new Set<AlAdoptar>();
+
+/**
+ * Para quien recuerda algo atado al token (useSesion): avisa cuando esta
+ * pestaña tomó el token que guardó otra. Puede ser de otra cuenta, así que
+ * hay que volver a preguntar quién es. Devuelve cómo desuscribirse.
+ */
+export function alAdoptarToken(avisar: AlAdoptar): () => void {
+  alAdoptar.add(avisar);
+  return () => {
+    alAdoptar.delete(avisar);
+  };
+}
+
+/**
+ * Si otra pestaña guardó un token distinto del de ésta, lo toma: sólo cambia
+ * la memoria, no navega. Una pestaña sin sesión (tocó Salir, o todavía no
+ * entró) no toma nada: si alguien salió acá, sigue afuera. Devuelve si tomó.
+ */
+function adoptarTokenGuardado(): boolean {
+  const anterior = tokenAdmin;
+  const guardado = leerTokenGuardado();
+  if (anterior === null || guardado === null || guardado === anterior) return false;
+  tokenAdmin = guardado;
+  alAdoptar.forEach((avisar) => avisar(anterior, guardado));
+  return true;
+}
+
+if (typeof window !== "undefined") {
+  // Sólo llega de OTRAS pestañas: la que guarda no recibe su propio evento.
+  // Un borrado (newValue null) no se sigue: el Salir de otra pestaña no saca
+  // a ésta, como siempre.
+  window.addEventListener("storage", (evento) => {
+    if (evento.key === CLAVE_TOKEN && evento.newValue) adoptarTokenGuardado();
+  });
+}
+
+/** Con qué token salió el pedido que terminó en este error. Aparte y no en el
+ *  error, para que el token no aparezca si alguien lo muestra en la consola. */
+const tokenDelPedido = new WeakMap<ErrorApi, string>();
+
+/**
+ * Ante un 401: ¿esta pestaña se quedó sin sesión? No, si el pedido salió con
+ * un token que ya no es el suyo, o si otra pestaña guardó uno nuevo (cambió la
+ * contraseña, o volvió a entrar): en los dos casos sigue, con ése. Sólo si el
+ * 401 fue con el token que tiene ahora, la sesión murió de verdad.
+ */
+export function perdioLaSesion(error: ErrorApi): boolean {
+  if (!error.esSinSesion) return false;
+  const usado = tokenDelPedido.get(error) ?? tokenAdmin;
+  adoptarTokenGuardado();
+  return tokenAdmin === null || tokenAdmin === usado;
+}
+
+/** ¿Se puede repetir un pedido que dio 401 con `usado`? Sí, si la pestaña ya
+ *  tiene otro token: lo tomó de otra pestaña antes, o lo toma ahora. */
+function hayOtroToken(usado: string | null): boolean {
+  if (usado === null) return false;
+  adoptarTokenGuardado();
+  return tokenAdmin !== null && tokenAdmin !== usado;
+}
+
+type AlRenovar = (anterior: string | null, nuevo: string) => void;
+const alRenovar = new Set<AlRenovar>();
+
+/**
+ * Para quien recuerda algo atado al token (useSesion): avisa cuando el token
+ * cambia pero la cuenta es la MISMA, como al cambiar la contraseña. Así no se
+ * vuelve a preguntar quién es ni parpadea el panel. Devuelve cómo desuscribirse.
+ */
+export function alRenovarToken(avisar: AlRenovar): () => void {
+  alRenovar.add(avisar);
+  return () => {
+    alRenovar.delete(avisar);
+  };
+}
+
+function renovarToken(nuevo: string): void {
+  const anterior = tokenAdmin;
+  guardarToken(nuevo);
+  alRenovar.forEach((avisar) => avisar(anterior, nuevo));
 }
 
 export function haySesion(): boolean {
@@ -110,18 +226,33 @@ export function tokenDeSesion(): string | null {
 }
 
 interface Opciones {
-  metodo?: "GET" | "POST" | "PATCH" | "DELETE";
+  metodo?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   cuerpo?: unknown;
   conAuth?: boolean;
   senal?: AbortSignal;
 }
 
 async function pedir<T>(ruta: string, opciones: Opciones = {}): Promise<T> {
-  const { metodo = "GET", cuerpo, conAuth = false, senal } = opciones;
+  const usado = opciones.conAuth ? tokenAdmin : null;
+  try {
+    return await pedirCon<T>(ruta, opciones, usado);
+  } catch (error) {
+    // Un 401 con un token viejo, cuando otra pestaña ya guardó uno nuevo: se
+    // repite una sola vez con ése. El backend responde 401 antes de cambiar
+    // nada, así que repetir no duplica ningún cambio.
+    if (error instanceof ErrorApi && error.esSinSesion && hayOtroToken(usado)) {
+      return pedirCon<T>(ruta, opciones, tokenAdmin);
+    }
+    throw error;
+  }
+}
+
+async function pedirCon<T>(ruta: string, opciones: Opciones, token: string | null): Promise<T> {
+  const { metodo = "GET", cuerpo, senal } = opciones;
 
   const cabeceras: Record<string, string> = {};
   if (cuerpo !== undefined) cabeceras["Content-Type"] = "application/json";
-  if (conAuth && tokenAdmin) cabeceras["Authorization"] = `Bearer ${tokenAdmin}`;
+  if (token) cabeceras["Authorization"] = `Bearer ${token}`;
 
   let respuesta: Response;
   try {
@@ -141,13 +272,20 @@ async function pedir<T>(ruta: string, opciones: Opciones = {}): Promise<T> {
   if (respuesta.status === 204) return undefined as T;
 
   if (!respuesta.ok) {
-    throw await comoErrorApi(respuesta);
+    throw await comoErrorApi(respuesta, token);
   }
 
   return (await respuesta.json()) as T;
 }
 
-async function comoErrorApi(respuesta: Response): Promise<ErrorApi> {
+/** `token`: con cuál salió el pedido, para perdioLaSesion. */
+async function comoErrorApi(respuesta: Response, token: string | null): Promise<ErrorApi> {
+  const error = await leerError(respuesta);
+  if (token) tokenDelPedido.set(error, token);
+  return error;
+}
+
+async function leerError(respuesta: Response): Promise<ErrorApi> {
   // El backend siempre manda { error: { codigo, mensaje } }. Pero un 502 de un
   // proxy, o Render devolviendo su propia página mientras despierta, no lo
   // respeta: por eso se contempla que el cuerpo no sea el esperado.
@@ -243,8 +381,46 @@ export const admin = {
 
   salir: () => guardarToken(null),
 
-  /** Quién está usando el panel y con qué rol. */
+  /** Quién está usando el panel: rol, avatar, tema y predeterminados. */
   yo: () => pedir<UsuarioYo>("/api/admin/yo", { conAuth: true }),
+
+  /** Mi cuenta: nombre, tema y predeterminados (por partes). Devuelve la
+   *  cuenta entera, como yo(). Para que el panel lo refleje al instante,
+   *  pasale la respuesta a actualizarUsuarioEnSesion (useSesion). */
+  actualizarYo: (cambio: CambioYo) =>
+    pedir<UsuarioYo>("/api/admin/yo", { metodo: "PATCH", cuerpo: cambio, conAuth: true }),
+
+  /** Cambia la contraseña. El backend cierra todas las sesiones de la cuenta
+   *  y devuelve una nueva para esta: el token nuevo queda guardado acá, así
+   *  quien la cambió sigue adentro. Con `actual` incorrecta, 422 con el
+   *  mensaje para mostrar; con muchos intentos, 429. */
+  cambiarContrasena: async (actual: string, nueva: string) => {
+    const sesion = await pedir<Sesion>("/api/admin/yo/contrasena", {
+      metodo: "POST",
+      cuerpo: { actual, nueva } satisfies PedidoCambioContrasena,
+      conAuth: true,
+    });
+    renovarToken(sesion.token);
+    return sesion;
+  },
+
+  /** Firma para subir la foto de la cuenta directo a Cloudinary, a la carpeta
+   *  avatares/{id}. La misma forma que la firma de las fotos del invitado:
+   *  sirve con lib/subir.ts. */
+  firmaAvatar: () =>
+    pedir<Firma>("/api/admin/yo/avatar/firma", { metodo: "POST", conAuth: true }),
+
+  /** Después de subirla: registra la foto de la cuenta. Devuelve la cuenta. */
+  guardarAvatar: (public_id: string, url: string) =>
+    pedir<UsuarioYo>("/api/admin/yo/avatar", {
+      metodo: "PUT",
+      cuerpo: { public_id, url } satisfies AvatarNuevo,
+      conAuth: true,
+    }),
+
+  /** Saca la foto de la cuenta. Devuelve la cuenta. */
+  quitarAvatar: () =>
+    pedir<UsuarioYo>("/api/admin/yo/avatar/quitar", { metodo: "POST", conAuth: true }),
 
   /** Todas las cuentas con su historial. Sólo admin: un organizador recibe 403. */
   cuentas: () => pedir<Cuenta[]>("/api/admin/cuentas", { conAuth: true }),
@@ -352,10 +528,19 @@ export const admin = {
     `${BASE}/api/admin/eventos/${id}/descarga?incluir=${incluir}`,
 
   descargar: async (id: number, incluir: "aprobadas" | "todas") => {
-    const respuesta = await fetch(admin.urlDescarga(id, incluir), {
-      headers: tokenAdmin ? { Authorization: `Bearer ${tokenAdmin}` } : {},
-    });
-    if (!respuesta.ok) throw await comoErrorApi(respuesta);
+    const bajar = (token: string | null) =>
+      fetch(admin.urlDescarga(id, incluir), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+    let usado = tokenAdmin;
+    let respuesta = await bajar(usado);
+    // Lo mismo que `pedir`: con el token viejo y uno nuevo de otra pestaña, se
+    // repite una vez con ése.
+    if (respuesta.status === 401 && hayOtroToken(usado)) {
+      usado = tokenAdmin;
+      respuesta = await bajar(usado);
+    }
+    if (!respuesta.ok) throw await comoErrorApi(respuesta, usado);
     return respuesta.blob();
   },
 };
@@ -369,6 +554,23 @@ export const cuentas = {
     pedir<RespuestaRegistro>("/api/cuentas/registro", {
       metodo: "POST",
       cuerpo: pedido,
+    }),
+
+  /** "Olvidé mi contraseña". Responde lo mismo exista o no la cuenta; si
+   *  existe, le llega un email con el link. Con muchos pedidos, 429. */
+  recuperar: (email: string) =>
+    pedir<RespuestaRecuperar>("/api/cuentas/recuperar", {
+      metodo: "POST",
+      cuerpo: { email } satisfies PedidoRecuperar,
+    }),
+
+  /** Elige la contraseña nueva con el token del link del email. No abre
+   *  sesión: después, a Entrar. Si el link ya no sirve, 422 con un solo
+   *  mensaje para todos los casos. */
+  restablecer: (token: string, password: string) =>
+    pedir<RespuestaRestablecer>("/api/cuentas/restablecer", {
+      metodo: "POST",
+      cuerpo: { token, password } satisfies PedidoRestablecer,
     }),
 };
 

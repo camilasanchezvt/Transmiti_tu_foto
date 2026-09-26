@@ -8,7 +8,8 @@
 -- sus eventos. Se crean desde el registro público y nacen `pendiente`: no
 -- entran hasta que un admin las habilita. Dar de baja es un estado, no un DELETE.
 -- Única excepción: un superadmin puede eliminar una cuenta para siempre. Se
--- borra sólo su fila; sus eventos pasan a él y fotos.moderada_por queda en NULL.
+-- borra sólo su fila (y sus pedidos de recuperación, por ON DELETE CASCADE);
+-- sus eventos pasan a él y fotos.moderada_por queda en NULL.
 CREATE TABLE usuarios (
   id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   email         text NOT NULL UNIQUE,
@@ -18,7 +19,27 @@ CREATE TABLE usuarios (
                 CHECK (rol IN ('superadmin','admin','organizador')),
   estado        text NOT NULL DEFAULT 'pendiente'
                 CHECK (estado IN ('pendiente','activa','baja')),
-  creado_en     timestamptz NOT NULL DEFAULT now()
+  creado_en     timestamptz NOT NULL DEFAULT now(),
+  -- Un token de sesión emitido antes de este momento ya no sirve. Se pone al
+  -- restablecer la contraseña por email y al cambiarla desde Mi cuenta.
+  sesiones_desde   timestamptz,
+  -- La foto de la cuenta, en Cloudinary dentro de avatares/{id}/.
+  avatar_public_id text,
+  avatar_url       text,
+  -- El tema del panel. 'automatico' sigue al del sistema operativo.
+  tema             text NOT NULL DEFAULT 'automatico'
+                   CHECK (tema IN ('oscuro','claro','automatico')),
+  -- Predeterminados: se copian a cada evento nuevo de la cuenta.
+  pred_segundos_por_foto         int NOT NULL DEFAULT 7
+                                 CHECK (pred_segundos_por_foto BETWEEN 3 AND 30),
+  pred_max_fotos_por_dispositivo int NOT NULL DEFAULT 10
+                                 CHECK (pred_max_fotos_por_dispositivo BETWEEN 1 AND 50),
+  pred_pantalla_fondo      text NOT NULL DEFAULT 'desenfocado'
+                           CHECK (pred_pantalla_fondo IN ('desenfocado','negro')),
+  pred_pantalla_transicion text NOT NULL DEFAULT 'fundido'
+                           CHECK (pred_pantalla_transicion IN ('fundido','corte')),
+  pred_pantalla_nombre     boolean NOT NULL DEFAULT true,
+  pred_pantalla_qr         boolean NOT NULL DEFAULT true
 );
 
 CREATE TABLE eventos (
@@ -42,7 +63,15 @@ CREATE TABLE eventos (
   video_pedido_en timestamptz,
   -- A los 30 días de fecha_evento se borran de Cloudinary todas las fotos y
   -- todos los videos del evento. Las filas quedan; esto marca cuándo se borraron.
-  fotos_borradas_en timestamptz
+  fotos_borradas_en timestamptz,
+  -- Cómo se ve la pantalla del proyector. Al crear el evento se copian de los
+  -- predeterminados del dueño (usuarios.pred_*).
+  pantalla_fondo          text NOT NULL DEFAULT 'desenfocado'
+                          CHECK (pantalla_fondo IN ('desenfocado','negro')),
+  pantalla_transicion     text NOT NULL DEFAULT 'fundido'
+                          CHECK (pantalla_transicion IN ('fundido','corte')),
+  pantalla_mostrar_nombre boolean NOT NULL DEFAULT true,
+  pantalla_mostrar_qr     boolean NOT NULL DEFAULT true
 );
 
 CREATE TABLE fotos (
@@ -61,6 +90,23 @@ CREATE TABLE fotos (
   moderada_en      timestamptz,
   moderada_por     bigint REFERENCES usuarios(id)
 );
+
+-- Los pedidos de "olvidé mi contraseña". Se guarda el HASH del token (sha256),
+-- nunca el token: viaja sólo en el email. Sirve una vez y durante una hora; un
+-- pedido nuevo anula los anteriores vivos. Nada se borra en el uso normal: se
+-- van sólo con la cuenta, si un superadmin la elimina.
+CREATE TABLE recuperaciones_contrasena (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  usuario_id  bigint NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  token_hash  text NOT NULL UNIQUE,
+  creado_en   timestamptz NOT NULL DEFAULT now(),
+  vence_en    timestamptz NOT NULL,
+  usado_en    timestamptz,
+  anulado_en  timestamptz
+);
+
+-- Para anular los pedidos vivos de una cuenta y para el ON DELETE CASCADE.
+CREATE INDEX idx_recuperaciones_usuario ON recuperaciones_contrasena (usuario_id);
 
 -- El índice del polling de la pantalla. Sin este, a las 200 fotos se arrastra.
 CREATE INDEX idx_fotos_pantalla ON fotos (evento_id, estado, id);

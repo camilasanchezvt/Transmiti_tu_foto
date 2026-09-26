@@ -27,6 +27,7 @@ from sqlalchemy.exc import DataError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as ExcepcionHTTP
 
+from . import email as correo
 from . import limpieza
 from .config import obtener_config
 from .database import get_db
@@ -49,6 +50,9 @@ async def ciclo_de_vida(_app: FastAPI) -> AsyncIterator[None]:
     log de uvicorn no muestra el nombre del logger, y en Render se busca por esa
     palabra para confirmar que quedó andando. Apagada en producción es una
     advertencia: las fotos quedarían en Cloudinary para siempre.
+
+    En producción, si falta BREVO_API_KEY o EMAIL_REMITENTE, también queda una
+    advertencia `email: SIN CONFIGURAR, ...` (app/email.py).
     """
     tarea: asyncio.Task[None] | None = None
     config_actual = obtener_config()
@@ -63,6 +67,10 @@ async def ciclo_de_vida(_app: FastAPI) -> AsyncIterator[None]:
             "limpieza: APAGADA, no se borra nada de Cloudinary "
             "(LIMPIEZA_ACTIVA=false o faltan credenciales de Cloudinary)"
         )
+    if config_actual.es_produccion:
+        # Sin Brevo, "olvidé mi contraseña" responde igual pero no manda nada.
+        # Se avisa al arrancar, una sola vez: después ya no se repite.
+        correo.configurado()
     try:
         yield
     finally:
@@ -87,13 +95,14 @@ app = FastAPI(
 )
 
 # DELETE lo usa un solo endpoint: eliminar una cuenta para siempre
-# (DELETE /api/admin/cuentas/{id}, sólo superadmin). Sin él en la lista, el
-# navegador corta el pedido en el preflight y el panel no llega a mandarlo.
+# (DELETE /api/admin/cuentas/{id}, sólo superadmin). PUT, otro: guardar el
+# avatar (PUT /api/admin/yo/avatar). Sin ellos en la lista, el navegador corta
+# el pedido en el preflight y el panel no llega a mandarlo.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.origenes_cors,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 

@@ -81,13 +81,13 @@ export default function PaginaVincular({ onVinculada }: Props) {
           aria-label={t.campo}
           // 12ch y no menos: con `tracking-[0.2em]`, el relleno y el borde, en 9ch
           // se cortaba el último dígito. Así entra también «800 181» con espacio.
-          className="w-[12ch] max-w-full rounded-2xl border-4 border-borde bg-hundido px-3 py-4 text-center font-mono text-4xl tracking-[0.2em] text-white outline-none focus:border-acento sm:px-6 sm:text-6xl"
+          className="w-[12ch] max-w-full rounded-2xl border-4 border-borde bg-hundido px-3 py-4 text-center font-mono text-4xl tracking-[0.2em] text-texto outline-none focus:border-acento sm:px-6 sm:text-6xl"
         />
 
         <button
           type="submit"
           disabled={soloDigitos.length !== 6 || enviando}
-          className="min-h-boton rounded-full bg-acento px-10 text-xl font-semibold text-white transition disabled:opacity-40 sm:text-2xl"
+          className="min-h-boton rounded-full bg-acento px-10 text-xl font-semibold text-luz transition disabled:opacity-40 sm:text-2xl"
         >
           {enviando ? t.conectando : t.boton}
         </button>

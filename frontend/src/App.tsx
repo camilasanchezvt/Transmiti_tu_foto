@@ -10,6 +10,10 @@ import PaginaHistorial from "./admin/PaginaHistorial";
 import PaginaCuentas from "./admin/PaginaCuentas";
 import PaginaRevisar from "./admin/PaginaRevisar";
 import PaginaAjustes from "./admin/PaginaAjustes";
+import PaginaCuenta from "./admin/PaginaCuenta";
+import PaginaOlvide from "./admin/PaginaOlvide";
+import PaginaRestablecer from "./admin/PaginaRestablecer";
+import SiempreOscuro from "./comp/SiempreOscuro";
 import { textosBase } from "./comp/textos";
 
 /**
@@ -20,8 +24,14 @@ import { textosBase } from "./comp/textos";
  *   /p/:token    pantalla, corre sola durante horas
  *   /admin/*     panel, notebook o celular, con apuro
  *
+ * Invitado y pantalla son siempre oscuros (<SiempreOscuro />); el panel sigue
+ * el tema que eligió la cuenta (lib/tema.ts).
+ *
  * En el panel:
  *   /admin/login, /admin/registro       sin sesión
+ *   /admin/olvide                       sin sesión: pedir el link por email
+ *   /admin/restablecer#token=…          sin sesión: el link del email
+ *   /admin/cuenta                       Mi cuenta
  *   /admin                              eventos vigentes
  *   /admin/historial                    terminados o con fecha pasada
  *   /admin/cuentas                      sólo admin
@@ -32,12 +42,17 @@ export default function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/e/:codigo" element={<PaginaInvitado />} />
-        <Route path="/p" element={<PantallaRaiz />} />
-        <Route path="/p/:token" element={<PaginaPantalla />} />
+        <Route element={<SiempreOscuro />}>
+          <Route path="/e/:codigo" element={<PaginaInvitado />} />
+          <Route path="/p" element={<PantallaRaiz />} />
+          <Route path="/p/:token" element={<PaginaPantalla />} />
+        </Route>
 
         <Route path="/admin/login" element={<PaginaLogin />} />
         <Route path="/admin/registro" element={<PaginaRegistro />} />
+        <Route path="/admin/olvide" element={<PaginaOlvide />} />
+        <Route path="/admin/restablecer" element={<PaginaRestablecer />} />
+        <Route path="/admin/cuenta" element={<PaginaCuenta />} />
         <Route path="/admin" element={<PaginaEventos />} />
         <Route path="/admin/historial" element={<PaginaHistorial />} />
         <Route path="/admin/cuentas" element={<PaginaCuentas />} />

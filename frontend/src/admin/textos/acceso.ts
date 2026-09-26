@@ -1,4 +1,5 @@
-// Textos de las dos páginas de acceso: Entrar y Crear cuenta.
+// Textos de las páginas de acceso: Entrar, Crear cuenta, Olvidé mi contraseña
+// y Contraseña nueva.
 //
 // Las lee gente que todavía no usó el panel (a veces es la primera vez que ve
 // la app), así que van sin palabras del sistema: nada de "usuario", "sesión",
@@ -10,10 +11,34 @@
 // ya están escritos para leerse así. El aviso de "esperá que te habiliten" lo
 // da la confirmación de Crear cuenta (registro.exito.mensaje).
 
-/** Lo mismo que exige el backend (PedidoRegistro en schemas.py). */
+/** Lo mismo que exige el backend (PedidoRegistro y PedidoRestablecer en
+ *  schemas.py). */
 export const MINIMO_PASSWORD = 10;
 export const MAXIMO_PASSWORD = 128;
 export const MAXIMO_NOMBRE = 80;
+
+/** La ayuda debajo de una contraseña nueva: el mínimo y cuántos faltan. La
+ *  usan Crear cuenta, Contraseña nueva y el cambio de contraseña de Mi cuenta. */
+export function ayudaPassword(largo: number): string {
+  if (largo === 0) return `Mínimo ${MINIMO_PASSWORD} caracteres`;
+  if (largo < MINIMO_PASSWORD) {
+    const faltan = MINIMO_PASSWORD - largo;
+    return `Mínimo ${MINIMO_PASSWORD} caracteres · te ${faltan === 1 ? "falta 1" : `faltan ${faltan}`}`;
+  }
+  // Cumplida: el mismo texto, en verde y con el tilde que pone el campo.
+  return `Mínimo ${MINIMO_PASSWORD} caracteres`;
+}
+
+/** Los errores de email y de contraseña nueva, iguales en todas las páginas. */
+const erroresEmail = {
+  emailVacio: "Escribí tu email",
+  emailInvalido: "Ese email no está completo. Revisalo",
+};
+const erroresPassword = {
+  passwordLarga: `Hasta ${MAXIMO_PASSWORD} caracteres`,
+  repetirVacio: "Escribí la contraseña otra vez",
+  noCoinciden: "No coincide con la contraseña",
+};
 
 export const acceso = {
   marca: "Transmití tu foto",
@@ -46,6 +71,7 @@ export const acceso = {
     faltanDatos: "Escribí tu email y tu contraseña",
     sinCuenta: "¿No tenés cuenta?",
     crearCuenta: "Creá una",
+    olvide: "¿Olvidaste tu contraseña?",
   },
 
   registro: {
@@ -56,25 +82,14 @@ export const acceso = {
     conCuenta: "¿Ya tenés cuenta?",
     irAEntrar: "Entrá",
 
-    ayudaPassword: (largo: number) => {
-      if (largo === 0) return `Mínimo ${MINIMO_PASSWORD} caracteres`;
-      if (largo < MINIMO_PASSWORD) {
-        const faltan = MINIMO_PASSWORD - largo;
-        return `Mínimo ${MINIMO_PASSWORD} caracteres · te ${faltan === 1 ? "falta 1" : `faltan ${faltan}`}`;
-      }
-      // Cumplida: el mismo texto, en verde y con el tilde que pone el campo.
-      return `Mínimo ${MINIMO_PASSWORD} caracteres`;
-    },
+    ayudaPassword,
     coinciden: "Coinciden",
 
     errores: {
       nombreVacio: "Escribí tu nombre",
       nombreLargo: `Hasta ${MAXIMO_NOMBRE} caracteres`,
-      emailVacio: "Escribí tu email",
-      emailInvalido: "Ese email no está completo. Revisalo",
-      passwordLarga: `Hasta ${MAXIMO_PASSWORD} caracteres`,
-      repetirVacio: "Escribí la contraseña otra vez",
-      noCoinciden: "No coincide con la contraseña",
+      ...erroresEmail,
+      ...erroresPassword,
     },
 
     exito: {
@@ -82,6 +97,65 @@ export const acceso = {
       titulo: "Listo",
       mensaje: "Cuando alguien que administra la app habilite tu cuenta, vas a poder entrar.",
       conEmail: (email: string) => `La pediste con ${email}.`,
+      volver: "Volver a Entrar",
+    },
+  },
+
+  /** /admin/olvide: pedir el link para elegir una contraseña nueva. La
+   *  respuesta es la misma haya o no una cuenta con ese email, y la
+   *  confirmación tampoco promete nada distinto. */
+  olvide: {
+    tituloPestana: "Olvidé mi contraseña",
+    titulo: "¿Olvidaste tu contraseña?",
+    subtitulo: "Escribí tu email y te mandamos un link para elegir una nueva.",
+    boton: "Mandarme el link",
+    volver: "Volver a Entrar",
+    errores: erroresEmail,
+
+    enviado: {
+      tituloPestana: "Revisá tu email",
+      titulo: "Revisá tu email",
+      mensaje: "Si hay una cuenta con ese email, te mandamos un link.",
+      noDeseado: "Revisá también el correo no deseado.",
+      conEmail: (email: string) => `Lo pediste para ${email}.`,
+      volver: "Volver a Entrar",
+      escribisteMal: "¿Lo escribiste mal?",
+      cambiar: "Cambialo",
+    },
+  },
+
+  /** /admin/restablecer#token=…: el link del email. */
+  restablecer: {
+    tituloPestana: "Contraseña nueva",
+    titulo: "Elegí una contraseña nueva",
+    subtitulo: "Es la que vas a usar para entrar.",
+    campos: {
+      password: "Contraseña nueva",
+      repetir: "Repetí la contraseña nueva",
+    },
+    boton: "Guardar contraseña",
+    volver: "Volver a Entrar",
+    ayudaPassword,
+    coinciden: "Coinciden",
+    errores: erroresPassword,
+
+    listo: {
+      tituloPestana: "Contraseña cambiada",
+      titulo: "Listo",
+      mensaje: "Ya podés entrar con tu contraseña nueva.",
+      otrosLados: "Donde tenías el panel abierto, vas a tener que entrar de nuevo.",
+      entrar: "Entrar",
+    },
+
+    /** Link vencido, usado, reemplazado por uno más nuevo, o sin token. Es el
+     *  mismo mensaje que manda el backend (_LINK_VENCIDO en
+     *  routers/cuentas.py): acá se usa sólo cuando al link le falta el token y
+     *  no hay nada que preguntarle. Si el backend contesta, va su mensaje. */
+    invalido: {
+      tituloPestana: "El link ya no sirve",
+      mensaje: "El link ya no sirve. Pedí uno nuevo.",
+      porQue: "Cada link sirve una sola vez y vence en una hora. Si pediste varios, sirve el último.",
+      pedirOtro: "Pedir otro link",
       volver: "Volver a Entrar",
     },
   },

@@ -13,9 +13,11 @@ import {
 import { ArrowRightStartOnRectangleIcon, ChevronLeftIcon } from "@heroicons/react/20/solid";
 
 import { ErrorApi, admin } from "../api/client";
+import Avatar from "../comp/Avatar";
 import { claseBotonChico } from "../comp/BotonChico";
 import { claseIconoChico, type Icono } from "../comp/icono";
 import { comun } from "./textos/comun";
+import { cuenta as textosCuenta } from "./textos/cuenta";
 import { olvidarSesion, revalidarSesion, useSesion } from "./useSesion";
 
 interface Props {
@@ -81,7 +83,7 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
 
   return (
     <div className="flex min-h-full flex-col">
-      <header className="sticky top-0 z-40 border-b border-borde bg-black/60 pt-[env(safe-area-inset-top)] backdrop-blur-2xl backdrop-saturate-150">
+      <header className="sticky top-0 z-40 border-b border-borde bg-barra pt-[env(safe-area-inset-top)] backdrop-blur-2xl backdrop-saturate-150">
         <div className="mx-auto flex h-16 max-w-5xl items-center gap-3 px-4 sm:px-6 md:gap-6">
           {/* min-h-11: también la marca es un objetivo táctil (lleva a Eventos). */}
           <Link
@@ -103,7 +105,7 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
                     className={({ isActive }) =>
                       "flex min-h-11 items-center gap-2 rounded-full px-4 text-sm font-medium transition " +
                       "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento " +
-                      (isActive ? "bg-white/20 text-white" : "text-tenue hover:text-white")
+                      (isActive ? "bg-elegido text-texto shadow-sm shadow-sombra/10" : "text-tenue hover:text-texto")
                     }
                   >
                     {s.texto}
@@ -114,8 +116,38 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
             </ul>
           </nav>
 
-          <div className="ml-auto flex min-w-0 items-center gap-3">
-            {usuario && <span className="min-w-0 truncate text-sm text-tenue">{usuario.nombre}</span>}
+          <div className="ml-auto flex min-w-0 items-center gap-2 sm:gap-3">
+            {/* Quién está, y el camino a Mi cuenta: como la foto de perfil de
+                arriba a la derecha en las apps de iOS. En el celular, sólo el
+                círculo (el nombre cortado a la mitad no se lee); desde sm,
+                también el nombre. 44 px de alto en los dos. */}
+            {usuario && (
+              <NavLink
+                to="/admin/cuenta"
+                end
+                className={({ isActive }) =>
+                  "group flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full p-1.5 transition " +
+                  "hover:bg-pulsado focus:outline-none focus-visible:ring-2 focus-visible:ring-acento " +
+                  "sm:min-w-0 sm:justify-start sm:py-1.5 sm:pl-1.5 sm:pr-3 " +
+                  (isActive ? "text-texto" : "text-tenue hover:text-texto")
+                }
+              >
+                {({ isActive }) => (
+                  <>
+                    <Avatar
+                      nombre={usuario.nombre}
+                      url={usuario.avatar_url}
+                      tamano="barra"
+                      // En Mi cuenta, el aro azul dice "estás acá", como la
+                      // pestaña elegida.
+                      className={isActive ? "ring-2 ring-acento" : ""}
+                    />
+                    <span className="sr-only min-w-0 text-sm sm:not-sr-only sm:truncate">{usuario.nombre}</span>
+                    <span className="sr-only">{textosCuenta.enLaBarra}</span>
+                  </>
+                )}
+              </NavLink>
+            )}
             <button type="button" onClick={salir} className={`shrink-0 ${claseBotonChico("vidrio")}`}>
               <ArrowRightStartOnRectangleIcon aria-hidden className={claseIconoChico} />
               {comun.salir}
@@ -130,7 +162,7 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
         {volver && (
           <Link
             to={volver.a}
-            className="-ml-1.5 mb-2 inline-flex min-h-11 items-center gap-0.5 rounded-full pr-1 text-base text-acento hover:brightness-110"
+            className="-ml-1.5 mb-2 inline-flex min-h-11 items-center gap-0.5 rounded-full pr-1 text-base text-acento-tinta hover:underline"
           >
             <ChevronLeftIcon aria-hidden className="h-6 w-6 shrink-0" />
             {volver.texto}
@@ -148,7 +180,7 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
       {/* Pestañas abajo, en el celular: la barra de pestañas de iOS. */}
       <nav
         aria-label={comun.nav.etiqueta}
-        className="fixed inset-x-0 bottom-0 z-40 border-t border-borde bg-black/60 pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl backdrop-saturate-150 md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-borde bg-barra pb-[env(safe-area-inset-bottom)] backdrop-blur-2xl backdrop-saturate-150 md:hidden"
       >
         <ul className="flex">
           {secciones.map((s) => (
@@ -158,8 +190,10 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
                 end
                 className={({ isActive }) =>
                   "flex min-h-14 flex-col items-center justify-center gap-0.5 pt-1 text-[11px] font-medium " +
-                  "focus:outline-none focus-visible:bg-white/10 " +
-                  (isActive ? "text-acento" : "text-tenue")
+                  "focus:outline-none focus-visible:bg-pulsado " +
+                  // La etiqueta es de 11 px: va en `-tinta`. El ícono hereda el
+                  // mismo color, así la pestaña no queda de dos azules.
+                  (isActive ? "text-acento-tinta" : "text-tenue")
                 }
               >
                 {({ isActive }) => {
@@ -193,7 +227,7 @@ function Contador({ n }: { n: number }) {
   return (
     <span
       aria-label={comun.pendientesCuentas(n)}
-      className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rojo px-1.5 text-xs font-semibold tabular-nums text-white"
+      className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-rojo px-1.5 text-xs font-semibold tabular-nums text-luz"
     >
       {n}
     </span>

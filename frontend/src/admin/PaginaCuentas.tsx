@@ -23,6 +23,7 @@ import {
 
 import { ErrorApi, admin, haySesion } from "../api/client";
 import type { CambioCuenta, Cuenta, EstadoCuenta } from "../api/tipos";
+import Avatar from "../comp/Avatar";
 import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import { ChipRol } from "../comp/ChipEstado";
@@ -311,13 +312,13 @@ export default function PaginaCuentas() {
         <section aria-labelledby={ID_SECCION.pendiente}>
           <Encabezado id={ID_SECCION.pendiente} titulo={t.pendientes.titulo}>
             {grupos.pendientes.length > 0 && (
-              <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-naranja/15 px-2 text-sm font-semibold tabular-nums text-naranja">
+              <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-naranja/15 px-2 text-sm font-semibold tabular-nums text-naranja-tinta">
                 {grupos.pendientes.length}
               </span>
             )}
           </Encabezado>
           {grupos.pendientes.length === 0 && (
-            <p className="mt-2 flex items-center gap-2 text-base text-white">
+            <p className="mt-2 flex items-center gap-2 text-base text-texto">
               <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0 text-verde" />
               {t.pendientes.vacio}
             </p>
@@ -400,7 +401,7 @@ export default function PaginaCuentas() {
           titulo={t.eliminar.titulo(aEliminar.nombre)}
           mensaje={
             <>
-              <p className="font-semibold text-white">{t.eliminar.noSeDeshace}</p>
+              <p className="font-semibold text-texto">{t.eliminar.noSeDeshace}</p>
               <p className="mt-1">{t.eliminar.seBorra}</p>
               <p className="mt-1">{t.eliminar.eventos(aEliminar.eventos)}</p>
             </>
@@ -424,7 +425,7 @@ export default function PaginaCuentas() {
         {aviso && (
           <p
             key={aviso.vez}
-            className="vidrio-oscuro flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-white"
+            className="vidrio-oscuro flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-luz"
           >
             <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0 text-verde" />
             <span className="min-w-0">{aviso.texto}</span>
@@ -591,19 +592,29 @@ function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAc
         "rounded-3xl border bg-panel p-5 " + (pendiente ? "border-naranja/50" : "border-borde")
       }
     >
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <h3 className="min-w-0 break-words text-lg font-semibold leading-snug">{cuenta.nombre}</h3>
-        {propia && (
-          <span className="inline-flex h-fit shrink-0 items-center whitespace-nowrap rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-medium text-white">
-            {t.vos}
-          </span>
-        )}
-        {/* Una pendiente no lleva chip: la sección y el borde naranja ya lo
-            dicen, y su rol todavía no significa nada. */}
-        {!pendiente && <ChipRol rol={cuenta.rol} />}
+      {/* La foto a la izquierda, como en Contactos: se reconoce a la persona
+          antes de leer. Las acciones, abajo y a todo el ancho de la tarjeta:
+          en 375 px no pueden perder los 56 px del círculo. */}
+      <div className="flex items-start gap-3">
+        <Avatar nombre={cuenta.nombre} url={cuenta.avatar_url} tamano="tarjeta" />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <h3 className="min-w-0 break-words text-lg font-semibold leading-snug">{cuenta.nombre}</h3>
+            {propia && (
+              <span className="inline-flex h-fit shrink-0 items-center whitespace-nowrap rounded-full bg-hundido px-2.5 py-0.5 text-xs font-medium text-texto">
+                {t.vos}
+              </span>
+            )}
+            {/* Una pendiente no lleva chip: la sección y el borde naranja ya
+                lo dicen, y su rol todavía no significa nada. */}
+            {!pendiente && <ChipRol rol={cuenta.rol} />}
+          </div>
+          {/* break-all y no break-words: un email no tiene dónde partirse, y
+              al lado del círculo el renglón es más corto. */}
+          <p className="break-all text-sm text-tenue">{cuenta.email}</p>
+          <p className="mt-1 text-sm text-tenue">{detalle}</p>
+        </div>
       </div>
-      <p className="break-words text-sm text-tenue">{cuenta.email}</p>
-      <p className="mt-1 text-sm text-tenue">{detalle}</p>
 
       {acciones.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{acciones}</div>}
 
@@ -618,7 +629,7 @@ function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAc
       )}
 
       {falla && (
-        <p role="alert" className="mt-3 flex items-start gap-1.5 text-sm leading-snug text-rojo">
+        <p role="alert" className="mt-3 flex items-start gap-1.5 text-sm leading-snug text-rojo-tinta">
           <ExclamationTriangleIcon aria-hidden className={`mt-0.5 ${claseIconoChip}`} />
           <span className="min-w-0 break-words">{falla}</span>
         </p>
@@ -649,8 +660,8 @@ function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAc
 /** Rojo, sin fondo ni borde, con los 44 px de alto de todo botón chico. El
  *  -ml-3 alinea el ícono con el texto de la tarjeta. */
 const CLASE_ELIMINAR =
-  "-ml-3 inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-rojo " +
-  "transition hover:bg-white/10 active:scale-[0.97] " +
+  "-ml-3 inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-rojo-tinta " +
+  "transition hover:bg-pulsado active:scale-[0.97] " +
   "disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 " +
   "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento";
 

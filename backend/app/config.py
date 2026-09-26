@@ -42,9 +42,37 @@ class Config(BaseSettings):
     # arranca: sin el secreto no hay con qué pedir el borrado.
     LIMPIEZA_ACTIVA: bool | None = None
 
+    # El email de "olvidé mi contraseña" sale por Brevo, por su API HTTP
+    # (app/email.py). Las cuatro son opcionales: sin la clave o sin el
+    # remitente la app arranca igual y la recuperación responde lo mismo, pero
+    # no manda nada y lo avisa en el log. EMAIL_REMITENTE tiene que estar
+    # verificado en Brevo (Senders); si no, Brevo rechaza el envío.
+    BREVO_API_KEY: str = ""
+    EMAIL_REMITENTE: str = ""
+    EMAIL_REMITENTE_NOMBRE: str = "Transmití tu foto"
+    # Dónde vive el panel, para armar el link del email. Sale de la
+    # configuración y nunca del pedido: con la cabecera Host, cualquiera podría
+    # hacer que el link con el token apunte a su propio sitio. Sin definir, el
+    # primer origen https de CORS_ORIGINS (o el primero, en desarrollo).
+    URL_PANEL: str = ""
+
     @property
     def origenes_cors(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
+
+    @property
+    def url_panel(self) -> str:
+        """Sin la barra final: el link se arma como `{url_panel}/admin/restablecer`."""
+        if self.URL_PANEL.strip():
+            return self.URL_PANEL.strip().rstrip("/")
+        origenes = self.origenes_cors
+        seguros = [o for o in origenes if o.lower().startswith("https://")]
+        elegido = (seguros or origenes or ["http://localhost:5173"])[0]
+        return elegido.rstrip("/")
+
+    @property
+    def email_configurado(self) -> bool:
+        return bool(self.BREVO_API_KEY.strip() and self.EMAIL_REMITENTE.strip())
 
     @property
     def es_produccion(self) -> bool:

@@ -2,7 +2,133 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Temas ────────────────────────────────────────────────────────────────
+   Una paleta por tema, como variables "R G B" (tailwind.config.js las nombra).
+   El tema lo pone lib/tema.ts en <html data-tema="oscuro|claro">; el script de
+   index.html lo pone antes de pintar, así no hay parpadeo.
+
+   Oscuro es el de siempre y el que vale si no hay data-tema: el salón está
+   oscuro y el proyector pierde brillo. El invitado (/e/…) y la pantalla (/p/…)
+   lo usan siempre, elija lo que elija quien organiza.
+
+   Claro: los colores de sistema de iOS de día. Mismo vidrio, pero blanco. */
+
 @layer base {
+  :root,
+  :root[data-tema="oscuro"] {
+    color-scheme: dark;
+
+    --fondo: 0 0 0;
+    --texto: 255 255 255;
+    --tenue: 235 235 245; /* secondaryLabel */
+    --tenue-alfa: 0.6;
+
+    --panel: 255 255 255;
+    --panel-alfa: 0.08;
+    --hoja: 255 255 255;
+    --hoja-alfa: 0.08;
+    --borde: 255 255 255;
+    --borde-alfa: 0.16;
+    --hundido: 118 118 128;
+    --hundido-alfa: 0.24;
+    --barra: 0 0 0;
+    --barra-alfa: 0.6;
+    --velo: 0 0 0;
+    --velo-alfa: 0.6;
+    --pulsado: 255 255 255;
+    --pulsado-alfa: 0.15;
+    --elegido: 255 255 255;
+    --elegido-alfa: 0.2;
+
+    /* Las tintas (texto chico en color) son las de alto contraste de iOS
+       en azul y rojo: el color de sistema queda en 3.8–4.4:1 sobre su propio
+       tinte (bg-acento/15 text-acento-tinta, un chip) y sobre los campos
+       hundidos ("Mostrar", los errores). #409CFF y #FF6961 pasan de 4.5:1
+       en los dos. Verde y naranja ya pasan: son el mismo color. */
+    --acento: 10 132 255; /* #0A84FF */
+    --acento-tinta: 64 156 255; /* #409CFF */
+    --rojo: 255 69 58; /* #FF453A */
+    --rojo-tinta: 255 105 97; /* #FF6961 */
+    --verde: 48 209 88; /* #30D158 */
+    --verde-tinta: 48 209 88;
+    --naranja: 255 159 10; /* #FF9F0A */
+    --naranja-tinta: 255 159 10;
+    --gris: 203 213 225;
+
+    --luz: 255 255 255;
+    --sombra: 0 0 0;
+
+    /* El canto del vidrio y su sombra (.bg-panel). */
+    --panel-brillo: 255 255 255 / 0.22;
+    --panel-canto: 255 255 255 / 0.08;
+    --panel-sombra: 0 0 0 / 0.6;
+
+    /* Las luces del fondo (body::before). */
+    --luces-azul: 10 132 255 / 0.32;
+    --luces-violeta: 191 90 242 / 0.28;
+    --luces-naranja: 255 159 10 / 0.18;
+  }
+
+  :root[data-tema="claro"] {
+    color-scheme: light;
+
+    --fondo: 242 242 247; /* #F2F2F7, systemGroupedBackground */
+    --texto: 0 0 0;
+    /* El tono del secondaryLabel de iOS, más firme: al 0.6 de Apple queda en
+       3.1–3.4:1 sobre el vidrio, el fondo y los chips grises, y es el texto de
+       las etiquetas, las fechas y las pestañas. Al 0.78 pasa de 4.5:1 en todos
+       (también sobre la luz azul del fondo) y sigue muy por debajo del negro
+       del texto principal, así que la jerarquía no cambia. */
+    --tenue: 60 60 67;
+    --tenue-alfa: 0.78;
+
+    --panel: 255 255 255;
+    --panel-alfa: 0.72;
+    --hoja: 255 255 255;
+    --hoja-alfa: 0.94;
+    --borde: 0 0 0;
+    --borde-alfa: 0.1;
+    --hundido: 118 118 128; /* tertiarySystemFill */
+    --hundido-alfa: 0.12;
+    --barra: 249 249 249;
+    --barra-alfa: 0.8;
+    --velo: 0 0 0;
+    --velo-alfa: 0.35;
+    --pulsado: 0 0 0;
+    --pulsado-alfa: 0.06;
+    /* La pestaña elegida del control segmentado: blanca y con sombra. */
+    --elegido: 255 255 255;
+    --elegido-alfa: 1;
+
+    /* Las tintas son para TEXTO chico en color, y muchas veces van sobre su
+       propio tinte (bg-verde/15 text-verde-tinta, en un chip o un aviso). Las
+       de alto contraste de iOS (#248A3D, #D70015, #C93400) quedan ahí en
+       3.0–4.3:1; estas, un paso más oscuras, pasan de 4.5:1 sobre el tinte,
+       el vidrio, el fondo y la luz azul. Siguen leyéndose verde, rojo y
+       naranja, y el color nunca va solo: lo acompaña la palabra. */
+    --acento: 0 122 255; /* #007AFF */
+    --acento-tinta: 0 64 221; /* #0040DD, la de más contraste */
+    --rojo: 255 59 48; /* #FF3B30 */
+    --rojo-tinta: 176 0 24; /* #B00018 */
+    --verde: 52 199 89; /* #34C759 */
+    --verde-tinta: 27 106 46; /* #1B6A2E */
+    --naranja: 255 149 0; /* #FF9500 */
+    --naranja-tinta: 168 44 0; /* #A82C00 */
+    --gris: 71 85 105;
+
+    --luz: 255 255 255;
+    --sombra: 0 0 0;
+
+    --panel-brillo: 255 255 255 / 0.9;
+    --panel-canto: 0 0 0 / 0.04;
+    --panel-sombra: 0 0 0 / 0.12;
+
+    /* Más suaves: de día, las luces son un tinte, no un resplandor. */
+    --luces-azul: 0 122 255 / 0.14;
+    --luces-violeta: 175 82 222 / 0.12;
+    --luces-naranja: 255 149 0 / 0.1;
+  }
+
   html,
   body,
   #root {
@@ -10,7 +136,7 @@
   }
 
   body {
-    @apply bg-fondo text-white antialiased;
+    @apply bg-fondo text-texto antialiased;
     /* San Francisco en los Apple; en el resto, la fuente del sistema. */
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
     letter-spacing: -0.01em;
@@ -21,9 +147,9 @@
   }
 
   /* Fondo. El vidrio necesita color detrás para que el desenfoque se note:
-     sobre negro liso un panel translúcido es sólo gris. En vez de degradés son
-     tres círculos de color sólido, desenfocados, como un fondo de pantalla de
-     iOS. Van en un ::before fijo porque background-attachment: fixed no anda
+     sobre un fondo liso un panel translúcido es sólo gris. En vez de degradés
+     son tres círculos de color sólido, desenfocados, como un fondo de pantalla
+     de iOS. Van en un ::before fijo porque background-attachment: fixed no anda
      en iOS. */
   body::before {
     content: "";
@@ -35,9 +161,9 @@
     z-index: -1;
     pointer-events: none;
     box-shadow:
-      15vw 10vh 0 22vmax rgb(10 132 255 / 0.32),
-      90vw 35vh 0 20vmax rgb(191 90 242 / 0.28),
-      45vw 105vh 0 26vmax rgb(255 159 10 / 0.18);
+      15vw 10vh 0 22vmax rgb(var(--luces-azul)),
+      90vw 35vh 0 20vmax rgb(var(--luces-violeta)),
+      45vw 105vh 0 26vmax rgb(var(--luces-naranja));
     filter: blur(90px);
   }
 
@@ -47,31 +173,36 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
-  /* El selector de fecha y los números nativos, en oscuro. */
-  input {
-    color-scheme: dark;
+  /* El selector de fecha, los números nativos y la lista de un <select>
+     siguen al tema: color-scheme se hereda de :root. Las opciones, además,
+     con el fondo del tema (Windows pinta la lista desplegada con esto). */
+  option {
+    @apply bg-fondo text-texto;
   }
 }
 
 @layer utilities {
   /* Todo lo que usa bg-panel es vidrio: fondo translúcido, desenfoque de lo que
      queda detrás y un brillo de un píxel arriba, como el canto de un cristal.
-     Centralizado acá para que ningún componente tenga que repetirlo. */
-  .bg-panel {
+     Centralizado acá para que ningún componente tenga que repetirlo. bg-hoja
+     (los diálogos) es el mismo vidrio, más opaco en claro. */
+  .bg-panel,
+  .bg-hoja {
     -webkit-backdrop-filter: blur(24px) saturate(180%);
     backdrop-filter: blur(24px) saturate(180%);
     box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 0.22),
-      inset 0 0 0 0.5px rgb(255 255 255 / 0.08),
-      0 12px 32px -12px rgb(0 0 0 / 0.6);
+      inset 0 1px 0 rgb(var(--panel-brillo)),
+      inset 0 0 0 0.5px rgb(var(--panel-canto)),
+      0 12px 32px -12px rgb(var(--panel-sombra));
   }
 
   /* Vidrio oscuro para lo que va encima de una foto: tiene que leerse sobre
-     cualquier imagen, clara u oscura. */
+     cualquier imagen, clara u oscura, y en los dos temas. El texto va con
+     text-luz. */
   .vidrio-oscuro {
-    background-color: rgb(0 0 0 / 0.4);
+    background-color: rgb(var(--sombra) / 0.4);
     -webkit-backdrop-filter: blur(16px) saturate(140%);
     backdrop-filter: blur(16px) saturate(140%);
-    border: 1px solid rgb(255 255 255 / 0.14);
+    border: 1px solid rgb(var(--luz) / 0.14);
   }
 }

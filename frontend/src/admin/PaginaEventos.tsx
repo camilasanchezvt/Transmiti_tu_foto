@@ -32,7 +32,7 @@ type AlCambiar = (evento: EventoAdmin) => void;
 
 const CAMPO =
   "mt-1 block h-12 w-full min-w-0 rounded-xl border border-borde bg-hundido px-3 " +
-  "text-base text-white outline-none focus:border-acento";
+  "text-base text-texto outline-none focus:border-acento";
 
 /** Las fotos y el video se borran a los 30 días de la fecha del evento
  *  (backend, limpieza.DIAS_HASTA_BORRAR). */
@@ -167,8 +167,8 @@ export default function PaginaEventos() {
           <Link
             to="/admin/historial"
             className={
-              "inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-center text-sm text-acento " +
-              "hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
+              "inline-flex min-h-11 items-center gap-1 rounded-full px-3 text-center text-sm text-acento-tinta " +
+              "hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
             }
           >
             {t.alHistorial}
@@ -326,18 +326,15 @@ function FormularioCrear({
         {conPara && (
           <label className="min-w-0 text-sm text-tenue">
             {t.crear.para}
-            {/* color-scheme oscuro: sin esto, en Windows la lista desplegada
-                sale blanca con letras blancas. */}
-            <select
-              value={para}
-              onChange={(e) => setPara(e.target.value)}
-              className={`${CAMPO} [color-scheme:dark]`}
-            >
-              <option value="" className="bg-black">
+            {/* La lista desplegada sigue al tema: color-scheme se hereda de
+                <html> y las opciones llevan el fondo del tema (index.css).
+                Sin eso, en Windows salía blanca con letras blancas. */}
+            <select value={para} onChange={(e) => setPara(e.target.value)} className={CAMPO}>
+              <option value="">
                 {t.crear.paraMi}
               </option>
               {otras.map((c) => (
-                <option key={c.id} value={String(c.id)} className="bg-black">
+                <option key={c.id} value={String(c.id)}>
                   {c.nombre}
                 </option>
               ))}
@@ -360,7 +357,7 @@ function FormularioCrear({
       </div>
 
       {falla && (
-        <p role="alert" className="mt-3 text-sm text-rojo">
+        <p role="alert" className="mt-3 text-sm text-rojo-tinta">
           {falla}
         </p>
       )}
@@ -421,7 +418,7 @@ function TarjetaEvento({
         <Publicar evento={evento} texto={t.tarjeta.publicar} onCambio={onCambio} />
       ) : (
         hayPorRevisar && (
-          <p className="mt-3 text-sm font-medium text-acento">{t.tarjeta.porRevisar(evento.pendientes)}</p>
+          <p className="mt-3 text-sm font-medium text-acento-tinta">{t.tarjeta.porRevisar(evento.pendientes)}</p>
         )
       )}
 
@@ -486,7 +483,7 @@ function Publicar({ evento, texto, onCambio }: { evento: EventoAdmin; texto: str
   return (
     <div className="mt-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="flex items-start gap-2 text-sm leading-5 text-naranja">
+        <p className="flex items-start gap-2 text-sm leading-5 text-naranja-tinta">
           <ExclamationTriangleIcon aria-hidden className="h-5 w-5 shrink-0" />
           {t.tarjeta.avisoSinPublicar}
         </p>
@@ -500,7 +497,7 @@ function Publicar({ evento, texto, onCambio }: { evento: EventoAdmin; texto: str
         </Boton>
       </div>
       {falla && (
-        <p role="alert" className="mt-2 text-sm text-rojo">
+        <p role="alert" className="mt-2 text-sm text-rojo-tinta">
           {falla}
         </p>
       )}
@@ -539,7 +536,7 @@ function RecienCreado({
     <section aria-labelledby={idTitulo} className="mb-6 rounded-3xl border border-acento/70 bg-panel p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-sm font-medium text-acento">{t.recienCreado.etiqueta}</p>
+          <p className="text-sm font-medium text-acento-tinta">{t.recienCreado.etiqueta}</p>
           <h2
             id={idTitulo}
             ref={titulo}
@@ -561,7 +558,7 @@ function RecienCreado({
       {evento.estado === "borrador" ? (
         <Publicar evento={evento} texto={t.recienCreado.publicarAhora} onCambio={onCambio} />
       ) : (
-        <p role="status" className="mt-4 flex items-start gap-2 text-sm font-medium leading-5 text-verde">
+        <p role="status" className="mt-4 flex items-start gap-2 text-sm font-medium leading-5 text-verde-tinta">
           <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0" />
           {t.recienCreado.publicado}
         </p>

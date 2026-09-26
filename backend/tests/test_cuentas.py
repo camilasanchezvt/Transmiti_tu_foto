@@ -43,7 +43,21 @@ from tests.conftest import (
 
 pytestmark = sin_base
 
-CLAVES_CUENTA = {"id", "email", "nombre", "rol", "estado", "creado_en", "eventos", "ultimo_evento"}
+CLAVES_CUENTA = {"id", "email", "nombre", "rol", "estado", "creado_en", "eventos", "ultimo_evento",
+                 "avatar_url"}
+
+# Lo que GET /api/admin/yo trae además de quién es, para una cuenta recién
+# creada: sin avatar, tema automático y los predeterminados de siempre.
+YO_POR_DEFECTO = {
+    "avatar_url": None,
+    "tema": "automatico",
+    "predeterminados": {
+        "segundos_por_foto": 7,
+        "max_fotos_por_dispositivo": 10,
+        "pantalla": {"fondo": "desenfocado", "transicion": "fundido",
+                     "mostrar_nombre": True, "mostrar_qr": True},
+    },
+}
 
 
 def afirmar_error(respuesta, codigo_esperado: str, http_esperado: int) -> None:
@@ -364,13 +378,14 @@ def test_yo_de_un_admin(autorizado, db):
     ana = db.scalar(select(Usuario).where(Usuario.email == EMAIL_ADMIN))
     r = autorizado.get("/api/admin/yo")
     assert r.status_code == 200
-    assert r.json() == {"id": ana.id, "email": EMAIL_ADMIN, "nombre": "Ana Moderadora", "rol": "admin"}
+    assert r.json() == {"id": ana.id, "email": EMAIL_ADMIN, "nombre": "Ana Moderadora",
+                        "rol": "admin", **YO_POR_DEFECTO}
 
 
 def test_yo_de_un_organizador(autorizado_organizador, organizador):
     assert autorizado_organizador.get("/api/admin/yo").json() == {
         "id": organizador.id, "email": EMAIL_ORGANIZADOR,
-        "nombre": "Bruno Organizador", "rol": "organizador",
+        "nombre": "Bruno Organizador", "rol": "organizador", **YO_POR_DEFECTO,
     }
 
 

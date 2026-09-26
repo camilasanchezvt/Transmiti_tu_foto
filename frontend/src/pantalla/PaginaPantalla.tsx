@@ -37,7 +37,7 @@ export default function PaginaPantalla(props: Props = {}) {
 function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: () => void }) {
   const { token: enLaUrl = "" } = useParams();
   const token = tokenVinculado ?? enLaUrl;
-  const { cargando, error, datos, foto, anterior, hayFotos, sinConexion, llegaron } =
+  const { cargando, error, datos, foto, anterior, hayFotos, sinConexion, llegaron, estilo } =
     useCola(token);
 
   // Arranca con lo que ya está: al reintentar se vuelve a montar, y la ventana
@@ -80,10 +80,12 @@ function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: ()
   }, [pantallaCompleta, confirmando, entrarAcompleta]);
 
   // El nombre del evento en el título: con dos pantallas vinculadas, es lo que
-  // las distingue al ir a buscar cuál desvincular.
+  // las distingue al ir a buscar cuál desvincular. Por el valor y no por
+  // `datos`, que es un objeto nuevo en cada pasada del polling.
+  const nombreEvento = datos?.evento.nombre;
   useEffect(() => {
-    if (datos) document.title = textos.pestana(datos.evento.nombre);
-  }, [datos]);
+    if (nombreEvento) document.title = textos.pestana(nombreEvento);
+  }, [nombreEvento]);
 
   // Que la notebook no se suspenda a mitad del evento.
   useEffect(() => {
@@ -123,6 +125,16 @@ function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: ()
   const urlDelQr = `${window.location.origin}/e/${datos.evento.codigo_publico}`;
   const mostrarAviso = !pantallaCompleta && sePuedeCompleta;
 
+  // El estilo lo elige quien organiza en Ajustes y llega en cada pasada del
+  // polling: se aplica en la próxima foto, sin recargar.
+  const fundido = estilo.transicion === "fundido";
+  const desenfocado = estilo.fondo === "desenfocado";
+  const qrChico = hayFotos && !cerrado && estilo.mostrar_qr;
+  const conDesconectar = Boolean(tokenVinculado) && !pantallaCompleta;
+  // En un celular el nombre sube lo justo para no pisar lo de abajo: el QR
+  // chico es alto; Desconectar y el "¡Gracias!" del cierre, una línea.
+  const alturaNombre = qrChico ? "bottom-36" : conDesconectar || cerrado ? "bottom-20" : "bottom-10";
+
   return (
     <div
       ref={contenedor}
@@ -136,15 +148,20 @@ function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: ()
           {/* La key es la foto: la que sale sigue siendo la misma capa que
               estaba en pantalla, sin volver a cargar la imagen. useCola la
               retira al terminar el fundido, así la que entra siempre se monta
-              nueva, transparente, aunque sea la que acaba de salir. */}
-          {anterior && <Capa key={anterior.id} url={anterior.url} />}
-          <Capa key={foto.id} url={foto.url} apareciendo />
+              nueva, transparente, aunque sea la que acaba de salir. Con corte
+              seco no hay de dónde fundir: la que entra tapa todo de una. */}
+          {fundido && anterior && (
+            <Capa key={anterior.id} url={anterior.url} desenfocado={desenfocado} />
+          )}
+          <Capa key={foto.id} url={foto.url} desenfocado={desenfocado} apareciendo={fundido} />
           {/* Centrado con inset-x-0 + mx-auto + w-fit y no con left-1/2: un
               absoluto que arranca en la mitad sólo tiene la otra mitad para
               crecer, y el max-w nunca llegaba a aplicarse. En un celular va
               más arriba: abajo no entra al lado del QR y de Desconectar. */}
-          {foto.nombre_invitado && (
-            <p className="vidrio-oscuro absolute inset-x-0 bottom-36 mx-auto w-fit max-w-[80%] truncate rounded-full px-5 py-2 text-lg text-white sm:bottom-10 sm:px-6 sm:text-2xl">
+          {estilo.mostrar_nombre && foto.nombre_invitado && (
+            <p
+              className={`vidrio-oscuro absolute inset-x-0 ${alturaNombre} mx-auto w-fit max-w-[80%] truncate rounded-full px-5 py-2 text-lg text-luz sm:bottom-10 sm:px-6 sm:text-2xl`}
+            >
               {foto.nombre_invitado}
             </p>
           )}
@@ -169,16 +186,18 @@ function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: ()
         </div>
       )}
 
-      {/* ── QR chico, en una esquina fija. Desaparece al cerrar ── */}
-      {hayFotos && !cerrado && (
+      {/* ── QR chico, en una esquina fija. Desaparece al cerrar, o si
+          quien organiza lo apagó en Ajustes (el grande de la espera queda:
+          sin fotos, es lo único que hay para mostrar) ── */}
+      {qrChico && (
         <div className="vidrio-oscuro absolute bottom-4 right-4 flex flex-col items-center gap-2 rounded-2xl p-2 sm:bottom-8 sm:right-8 sm:p-3">
           <QR url={urlDelQr} lado={220} className="w-[max(13vmin,64px)] p-2" />
-          <p className="text-xs text-white/80 sm:text-sm">{textos.mandaLaTuya}</p>
+          <p className="text-xs text-luz/80 sm:text-sm">{textos.mandaLaTuya}</p>
         </div>
       )}
 
       {hayFotos && cerrado && (
-        <p className="vidrio-oscuro absolute bottom-4 right-4 rounded-full px-4 py-2 text-base text-white/90 sm:bottom-8 sm:right-8 sm:px-5 sm:text-xl">
+        <p className="vidrio-oscuro absolute bottom-4 right-4 rounded-full px-4 py-2 text-base text-luz/90 sm:bottom-8 sm:right-8 sm:px-5 sm:text-xl">
           {textos.gracias}
         </p>
       )}
@@ -189,7 +208,7 @@ function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: ()
       {llegaron > 0 && hayFotos && (
         <div
           className={
-            "pointer-events-none absolute left-4 animate-pulse rounded-full bg-acento px-4 py-2 text-base font-semibold text-white shadow-lg sm:left-8 sm:px-5 sm:text-lg " +
+            "pointer-events-none absolute left-4 animate-pulse rounded-full bg-acento px-4 py-2 text-base font-semibold text-luz shadow-lg sm:left-8 sm:px-5 sm:text-lg " +
             (mostrarAviso ? "top-20 sm:top-24" : "top-4 sm:top-8")
           }
         >
@@ -208,7 +227,7 @@ function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: ()
       )}
 
       {mostrarAviso && (
-        <p className="vidrio-oscuro absolute inset-x-0 top-4 mx-auto w-fit max-w-[90%] rounded-3xl px-5 py-2 text-center text-sm text-white/70 sm:top-8">
+        <p className="vidrio-oscuro absolute inset-x-0 top-4 mx-auto w-fit max-w-[90%] rounded-3xl px-5 py-2 text-center text-sm text-luz/70 sm:top-8">
           {textos.pantallaCompleta}
         </p>
       )}
@@ -223,7 +242,7 @@ function Proyeccion({ tokenVinculado, onReintentar }: Props & { onReintentar: ()
             e.stopPropagation();
             setConfirmando(true);
           }}
-          className="vidrio-oscuro absolute bottom-4 left-4 inline-flex min-h-11 items-center rounded-full px-4 text-sm text-white/60 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-acento sm:bottom-8 sm:left-8"
+          className="vidrio-oscuro absolute bottom-4 left-4 inline-flex min-h-11 items-center rounded-full px-4 text-sm text-luz/60 hover:text-luz focus:outline-none focus-visible:ring-2 focus-visible:ring-acento sm:bottom-8 sm:left-8"
         >
           {textos.desconectar}
         </button>
@@ -326,29 +345,58 @@ function NoArranca({
 
 /**
  * Una foto a pantalla completa. Nunca se deforma: entra completa y centrada, y
- * el espacio que sobra se llena con la misma imagen ampliada y desenfocada.
+ * el espacio que sobra se llena con la misma imagen ampliada y desenfocada, o
+ * queda en negro liso.
+ *
+ * La capa es opaca (bg-sombra, negro en cualquier tema): en el fundido, la que
+ * entra tapa de a poco a la que sale también en los costados. Transparente,
+ * con fondo negro, una foto horizontal seguía asomando al lado de la vertical
+ * que entraba y desaparecía de golpe al retirarse.
  */
-function Capa({ url, apareciendo = false }: { url: string; apareciendo?: boolean }) {
+function Capa({
+  url,
+  desenfocado,
+  apareciendo = false,
+}: {
+  url: string;
+  desenfocado: boolean;
+  /** Entra con fundido. Si no, se ve de una (corte seco). */
+  apareciendo?: boolean;
+}) {
   const [visible, setVisible] = useState(!apareciendo);
 
   useEffect(() => {
-    if (!apareciendo) return;
+    // Si pasan a corte seco mientras entraba con fundido, la capa es la misma
+    // (misma key) y el cuadro pendiente se cancela: queda vista para siempre,
+    // así no vuelve a apagarse si después vuelven a fundido.
+    if (!apareciendo) {
+      setVisible(true);
+      return;
+    }
     // Un cuadro de retraso para que el navegador registre la opacidad inicial y
-    // la transición se vea. Sin esto aparece de golpe.
+    // la transición se vea. Sin esto aparece de golpe. Con la pestaña oculta
+    // no corre ningún cuadro: la capa espera transparente hasta volver.
     const id = requestAnimationFrame(() => setVisible(true));
     return () => cancelAnimationFrame(id);
   }, [apareciendo]);
 
+  // Sin fundido se ve siempre, desde el mismo render en que llega el corte:
+  // no depende de ningún cuadro. Si no, una foto que estaba entrando cuando
+  // cambiaron el ajuste quedaba en negro hasta la próxima.
+  const opaca = visible || !apareciendo;
+
   return (
     <div
-      className="absolute inset-0 transition-opacity ease-in-out"
-      style={{ opacity: visible ? 1 : 0, transitionDuration: `${FUNDIDO_MS}ms` }}
+      className="absolute inset-0 bg-sombra transition-opacity ease-in-out"
+      style={{ opacity: opaca ? 1 : 0, transitionDuration: `${FUNDIDO_MS}ms` }}
     >
-      <div
-        aria-hidden
-        className="absolute inset-0 scale-110 bg-cover bg-center blur-3xl brightness-[0.35]"
-        style={{ backgroundImage: `url(${JSON.stringify(url)})` }}
-      />
+      {desenfocado && (
+        <div
+          aria-hidden
+          className="absolute inset-0 scale-110 bg-cover bg-center blur-3xl brightness-[0.35]"
+          style={{ backgroundImage: `url(${JSON.stringify(url)})` }}
+        />
+      )}
       <img src={url} alt="" className="relative h-full w-full object-contain" />
     </div>
   );

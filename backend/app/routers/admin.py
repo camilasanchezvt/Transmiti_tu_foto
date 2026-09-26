@@ -7,6 +7,10 @@ entre eventos; lo que ninguna base previene es que se aprueben fotos del evento
 equivocado con dos pestañas abiertas, y eso lo resuelve el panel.
 
 Las cuentas (listar, habilitar, dar de baja) están en routers/cuentas.py.
+
+Mi cuenta (`/yo`) también vive acá: cada cuenta cambia su nombre, su tema, sus
+predeterminados, su contraseña y su avatar. Nunca su email, su rol ni su
+estado. "Olvidé mi contraseña", que es sin sesión, está en routers/cuentas.py.
 """
 
 from __future__ import annotations
@@ -16,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -26,10 +30,15 @@ from .. import vinculacion
 from ..cloudinary_service import (
     ErrorVideo,
     armar_zip,
+    borrar_avatar_anterior,
+    carpeta_de_avatares,
     consultar_video,
     elegir_fotos_para_video,
+    firmar_carpeta,
     nombre_del_archivo,
     pedir_video,
+    verificar_avatar,
+    verificar_url,
 )
 from ..database import get_db
 from ..deps import es_admin, evento_del_usuario, usuario_actual
@@ -37,18 +46,24 @@ from ..errores import Codigo, ErrorApp
 from ..fechas import hoy_en_argentina
 from ..limpieza import archivos_vencidos, fecha_vencida, fotos_se_borran_el
 from ..models import Evento, Foto, Usuario
-from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido_en_todas
+from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido, permitido_en_todas
 from ..schemas import (
+    AvatarNuevo,
     CambioEstadoEvento,
     CambioEstadoFoto,
+    CambioYo,
     CodigoVinculacion,
+    EstiloPantalla,
     EventoAdmin,
     EventoNuevo,
+    Firma,
     FotoAdmin,
     FotoModerada,
     ListaFotosAdmin,
     LoteModeracion,
+    PedidoCambioContrasena,
     PedidoLogin,
+    Predeterminados,
     RespuestaError,
     Resumen,
     ResultadoLote,
@@ -57,12 +72,14 @@ from ..schemas import (
     VideoEvento,
 )
 from ..security import (
+    al_milisegundo,
     crear_token,
     generar_codigo_publico,
     generar_token_pantalla,
     hashear_password,
     verificar_password,
 )
+from .cuentas import anular_recuperaciones
 
 router = APIRouter(prefix="/api/admin", tags=["administración"])
 protegido = APIRouter(
@@ -138,6 +155,20 @@ def login(pedido: PedidoLogin, request: Request, db: Session = Depends(get_db)) 
 
     El tope va antes de buscar la cuenta y de correr bcrypt: un pedido frenado
     no gasta nada, y frena igual exista o no el email.
+
+    La fila de la cuenta se lee con FOR SHARE, y el lock dura hasta que
+    `get_db` cierra la sesión, o sea, hasta DESPUÉS de emitir el token. Sin
+    él, un login con la contraseña vieja que leía el hash mientras alguien
+    restablecía la contraseña (todavía sin confirmar) corría bcrypt, emitía
+    el token con un `iat` posterior al `sesiones_desde` nuevo y quedaba adentro
+    doce horas, justo lo que restablecer tenía que cortar. FOR SHARE choca con
+    el FOR NO KEY UPDATE de restablecer y de cambiar la contraseña, así que
+    quedan dos casos: si el cambio va primero, el login espera, relee la fila
+    y ve el hash nuevo (401); si el login va primero, el cambio espera a que
+    termine y su `sesiones_desde` queda después del `iat`, así que el token
+    muere. Dos logins a la vez no se frenan entre sí, y las FK de fotos y
+    eventos (FOR KEY SHARE) tampoco chocan: lo único que espera, lo que dura
+    un bcrypt, es un cambio a esta misma cuenta.
     """
     email = pedido.email.strip().lower()
     if not permitido_en_todas([
@@ -147,7 +178,11 @@ def login(pedido: PedidoLogin, request: Request, db: Session = Depends(get_db)) 
         raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS, _MUCHOS_INTENTOS)
     limpiar_cada_tanto()
 
-    usuario = db.scalar(select(Usuario).where(func.lower(Usuario.email) == email))
+    usuario = db.scalar(
+        select(Usuario)
+        .where(func.lower(Usuario.email) == email)
+        .with_for_update(read=True)
+    )
     if usuario is None:
         verificar_password(pedido.password, _hash_de_relleno())
         raise ErrorApp(Codigo.NO_AUTORIZADO, _NO_ENTRA)
@@ -161,13 +196,253 @@ def login(pedido: PedidoLogin, request: Request, db: Session = Depends(get_db)) 
     return Sesion(token=token, expira_en=expira_en)
 
 
+# ─────────────────────────────────────────────────────────────
+# Mi cuenta
+# ─────────────────────────────────────────────────────────────
+
+def _como_yo(usuario: Usuario) -> UsuarioYo:
+    return UsuarioYo(
+        id=usuario.id,
+        email=usuario.email,
+        nombre=usuario.nombre,
+        rol=usuario.rol,
+        avatar_url=usuario.avatar_url,
+        tema=usuario.tema,
+        predeterminados=Predeterminados(
+            segundos_por_foto=usuario.pred_segundos_por_foto,
+            max_fotos_por_dispositivo=usuario.pred_max_fotos_por_dispositivo,
+            pantalla=EstiloPantalla(
+                fondo=usuario.pred_pantalla_fondo,
+                transicion=usuario.pred_pantalla_transicion,
+                mostrar_nombre=usuario.pred_pantalla_nombre,
+                mostrar_qr=usuario.pred_pantalla_qr,
+            ),
+        ),
+    )
+
+
 @protegido.get("/yo", response_model=UsuarioYo, summary="Quién tiene la sesión abierta")
 def yo(usuario: Usuario = Depends(usuario_actual)) -> UsuarioYo:
     """El panel lo pide al entrar para saber qué mostrar: la pestaña de cuentas
     es sólo para admins y superadmins, y las acciones sobre otros admins, sólo
     para superadmins. Mostrarlas o no es comodidad; el permiso real lo exige
-    cada endpoint."""
-    return UsuarioYo(id=usuario.id, email=usuario.email, nombre=usuario.nombre, rol=usuario.rol)
+    cada endpoint.
+
+    Trae también lo de Mi cuenta: el avatar, el tema del panel (el panel lo
+    aplica al entrar) y los predeterminados de los eventos nuevos."""
+    return _como_yo(usuario)
+
+
+# De CambioYo.valores() a la columna de `usuarios`.
+_COLUMNA_DE = {
+    "nombre": "nombre",
+    "tema": "tema",
+    "segundos_por_foto": "pred_segundos_por_foto",
+    "max_fotos_por_dispositivo": "pred_max_fotos_por_dispositivo",
+    "pantalla.fondo": "pred_pantalla_fondo",
+    "pantalla.transicion": "pred_pantalla_transicion",
+    "pantalla.mostrar_nombre": "pred_pantalla_nombre",
+    "pantalla.mostrar_qr": "pred_pantalla_qr",
+}
+
+
+@protegido.patch(
+    "/yo",
+    response_model=UsuarioYo,
+    responses={422: {"model": RespuestaError,
+                     "description": "DATOS_INVALIDOS (también un campo que no existe, "
+                                    "como email, rol o estado)"}},
+    summary="Cambiar mi nombre, mi tema o mis predeterminados",
+)
+def cambiar_yo(
+    cambio: CambioYo,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(usuario_actual),
+) -> UsuarioYo:
+    """Todo parcial: lo que no viene no se toca, y hace falta al menos un valor.
+
+    Los predeterminados se copian a los eventos que se creen DESPUÉS; los que
+    ya existen no cambian. El email, el rol y el estado no se cambian acá (ni
+    son campos de este cuerpo: mandarlos es 422).
+
+    Idempotente: si no cambia nada, no se toca nada.
+    """
+    cambio_algo = False
+    for clave, valor in cambio.valores().items():
+        columna = _COLUMNA_DE[clave]
+        if getattr(usuario, columna) != valor:
+            setattr(usuario, columna, valor)
+            cambio_algo = True
+    if cambio_algo:
+        db.commit()
+        db.refresh(usuario)
+    return _como_yo(usuario)
+
+
+# Cambiar la contraseña con la actual: sin tope, una sesión robada (o una
+# compu que quedó abierta) serviría para probar contraseñas contra la cuenta
+# hasta dar con la actual, y después cambiarla y dejar afuera a su dueña. Cinco
+# por hora y por cuenta alcanzan para equivocarse al tipear.
+MAXIMO_CAMBIOS_DE_CONTRASENA = 5
+VENTANA_CAMBIOS_DE_CONTRASENA = 3600
+_CLAVE_CONTRASENA = "admin/contrasena"
+_ACTUAL_INCORRECTA = "La contraseña actual no es correcta"
+_MUCHOS_CAMBIOS = "Hubo muchos intentos. Esperá un rato y probá de nuevo."
+
+
+@protegido.post(
+    "/yo/contrasena",
+    response_model=Sesion,
+    responses={
+        422: {"model": RespuestaError,
+              "description": "DATOS_INVALIDOS: la contraseña actual no es correcta, o la "
+                             "nueva no tiene entre 10 y 128 caracteres"},
+        429: {"model": RespuestaError, "description": "DEMASIADOS_PEDIDOS"},
+    },
+    summary="Cambiar mi contraseña",
+)
+def cambiar_contrasena(
+    pedido: PedidoCambioContrasena,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(usuario_actual),
+) -> Sesion:
+    """Pide la contraseña actual aunque la sesión sea válida: una sesión abierta
+    en una compu ajena no alcanza para quedarse con la cuenta.
+
+    Cierra TODAS las sesiones abiertas de la cuenta (`sesiones_desde`) y
+    devuelve una sesión nueva, emitida en ese mismo instante, para que quien
+    la cambió siga adentro: el panel guarda el token nuevo. También anula los
+    links de "olvidé mi contraseña" que seguían vivos.
+
+    El tope va antes de bcrypt, como en el login: un pedido frenado no gasta nada.
+
+    La fila de la cuenta se relee con FOR NO KEY UPDATE antes de comparar la
+    contraseña. `usuario_actual` la leyó sin lock, y si la dueña canjea el link
+    del email mientras tanto, comparar contra ese hash viejo dejaría que una
+    sesión robada pisara la contraseña que ella acaba de elegir. Con el lock,
+    o se espera a que el canje confirme, o el canje espera a este pedido. Así
+    el orden de locks es el mismo que en /recuperar: primero la cuenta, después
+    sus pedidos de recuperación.
+    """
+    if not permitido(
+        _CLAVE_CONTRASENA, str(usuario.id),
+        maximo=MAXIMO_CAMBIOS_DE_CONTRASENA, ventana=VENTANA_CAMBIOS_DE_CONTRASENA,
+    ):
+        raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS, _MUCHOS_CAMBIOS)
+    limpiar_cada_tanto()
+
+    # `refresh` pisa los atributos del mismo objeto: lo leído por
+    # `usuario_actual` se guarda antes para ver si cambió en el medio.
+    sesiones_desde_validado = usuario.sesiones_desde
+    db.refresh(usuario, with_for_update={"key_share": True})
+    if usuario.estado != "activa":
+        raise ErrorApp(Codigo.NO_AUTORIZADO)
+    # Si alguien cerró las sesiones mientras este pedido estaba en vuelo (un
+    # restablecimiento u otro cambio de contraseña), la sesión que lo trajo ya
+    # no vale: mismo 401 que daría `usuario_actual` en el pedido siguiente.
+    if usuario.sesiones_desde != sesiones_desde_validado:
+        raise ErrorApp(Codigo.NO_AUTORIZADO)
+
+    if not verificar_password(pedido.actual, usuario.password_hash):
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _ACTUAL_INCORRECTA)
+
+    usuario.password_hash = hashear_password(pedido.nueva)
+    momento = al_milisegundo(datetime.now(timezone.utc))
+    usuario.sesiones_desde = momento
+    anular_recuperaciones(db, usuario.id, momento)
+    db.commit()
+    log.info("cuentas: la cuenta %s cambió su contraseña desde Mi cuenta", usuario.id)
+    token, expira_en = crear_token(usuario.id, usuario.email, emitido_en=momento)
+    return Sesion(token=token, expira_en=expira_en)
+
+
+# Firmas de avatar por cuenta y por hora. Cada firma deja subir imágenes a
+# Cloudinary durante una hora; sin tope, una sesión podría llenar el cupo.
+MAXIMO_FIRMAS_DE_AVATAR = 20
+VENTANA_FIRMAS_DE_AVATAR = 3600
+_CLAVE_FIRMA_AVATAR = "admin/avatar"
+
+
+@protegido.post(
+    "/yo/avatar/firma",
+    response_model=Firma,
+    responses={429: {"model": RespuestaError, "description": "DEMASIADOS_PEDIDOS"}},
+    summary="Firma para subir mi avatar a Cloudinary",
+)
+def firmar_avatar(usuario: Usuario = Depends(usuario_actual)) -> Firma:
+    """La misma firma que la de las fotos (sólo `folder` y `timestamp`), para la
+    carpeta `avatares/{id}` de la cuenta. El navegador sube directo a
+    Cloudinary y después guarda el resultado con PUT /api/admin/yo/avatar."""
+    if not permitido(
+        _CLAVE_FIRMA_AVATAR, str(usuario.id),
+        maximo=MAXIMO_FIRMAS_DE_AVATAR, ventana=VENTANA_FIRMAS_DE_AVATAR,
+    ):
+        raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS)
+    limpiar_cada_tanto()
+    return Firma(**firmar_carpeta(carpeta_de_avatares(usuario.id)))
+
+
+@protegido.put(
+    "/yo/avatar",
+    response_model=UsuarioYo,
+    responses={
+        400: {"model": RespuestaError, "description": "ARCHIVO_INVALIDO"},
+        403: {"model": RespuestaError, "description": "PUBLIC_ID_AJENO"},
+    },
+    summary="Guardar mi avatar ya subido a Cloudinary",
+)
+def guardar_avatar(
+    avatar: AvatarNuevo,
+    tareas: BackgroundTasks,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(usuario_actual),
+) -> UsuarioYo:
+    """Las mismas verificaciones que una foto de invitado (regla 4): el
+    `public_id` tiene que estar en `avatares/{id}/` de esta cuenta, sin
+    subcarpetas (si no, PUBLIC_ID_AJENO), y la `url` tiene que ser exactamente
+    la de esa imagen en la cuenta de Cloudinary de la app (si no,
+    ARCHIVO_INVALIDO). Sin esto, una cuenta podría mostrar de avatar cualquier
+    imagen de internet, o una foto de un evento.
+
+    Si reemplaza a otro, el anterior se borra de Cloudinary en segundo plano y
+    a mejor esfuerzo. Guardar el mismo otra vez no cambia nada.
+    """
+    verificar_avatar(avatar.public_id, usuario.id)
+    verificar_url(avatar.url, avatar.public_id)
+
+    anterior = usuario.avatar_public_id
+    if anterior != avatar.public_id or usuario.avatar_url != avatar.url:
+        usuario.avatar_public_id = avatar.public_id
+        usuario.avatar_url = avatar.url
+        db.commit()
+        db.refresh(usuario)
+        if anterior is not None and anterior != avatar.public_id:
+            tareas.add_task(borrar_avatar_anterior, anterior, usuario.id)
+    return _como_yo(usuario)
+
+
+@protegido.post(
+    "/yo/avatar/quitar",
+    response_model=UsuarioYo,
+    summary="Quitar mi avatar",
+)
+def quitar_avatar(
+    tareas: BackgroundTasks,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(usuario_actual),
+) -> UsuarioYo:
+    """Deja el avatar en null; el panel vuelve a mostrar la inicial. La imagen
+    se borra de Cloudinary en segundo plano y a mejor esfuerzo. Idempotente:
+    sin avatar, no hace nada."""
+    anterior = usuario.avatar_public_id
+    if anterior is not None or usuario.avatar_url is not None:
+        usuario.avatar_public_id = None
+        usuario.avatar_url = None
+        db.commit()
+        db.refresh(usuario)
+        if anterior is not None:
+            tareas.add_task(borrar_avatar_anterior, anterior, usuario.id)
+    return _como_yo(usuario)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -216,6 +491,10 @@ def _como_admin(evento: Evento, totales: dict[str, int]) -> EventoAdmin:
         video_url_listo=(
             evento.video_url if evento.video_estado == "listo" and not vencidos else None
         ),
+        pantalla_fondo=evento.pantalla_fondo,
+        pantalla_transicion=evento.pantalla_transicion,
+        pantalla_mostrar_nombre=evento.pantalla_mostrar_nombre,
+        pantalla_mostrar_qr=evento.pantalla_mostrar_qr,
     )
 
 
@@ -335,6 +614,10 @@ def crear_evento(
 
     Un admin puede crearlo a nombre de otra cuenta activa con `organizador_id`.
 
+    Nace con los predeterminados del DUEÑO (Mi cuenta): segundos por foto,
+    fotos por invitado y el estilo de la pantalla. Si un admin lo crea para
+    otra cuenta, son los de esa cuenta y no los del admin: el evento es de ella.
+
     Una fecha de hace 30 días o más se rechaza: sus archivos ya estarían
     vencidos, y la próxima pasada de limpieza lo cerraría y lo borraría sin
     dejar reabrirlo (la fecha no se puede cambiar después). Casi siempre es el
@@ -356,6 +639,12 @@ def crear_evento(
             codigo_publico=generar_codigo_publico(),
             token_pantalla=generar_token_pantalla(),
             estado="borrador",
+            segundos_por_foto=dueno.pred_segundos_por_foto,
+            max_fotos_por_dispositivo=dueno.pred_max_fotos_por_dispositivo,
+            pantalla_fondo=dueno.pred_pantalla_fondo,
+            pantalla_transicion=dueno.pred_pantalla_transicion,
+            pantalla_mostrar_nombre=dueno.pred_pantalla_nombre,
+            pantalla_mostrar_qr=dueno.pred_pantalla_qr,
         )
         db.add(evento)
         try:
@@ -387,8 +676,8 @@ def cambiar_estado_evento(
 ) -> EventoAdmin:
     """Cerrar deja de aceptar fotos, pero la pantalla sigue pasando las aprobadas.
 
-    Los segundos por foto le llegan a la pantalla en su próxima pasada de
-    polling, sin recargarla.
+    Los segundos por foto y el estilo de la pantalla (`pantalla_*`) le llegan
+    a la pantalla en su próxima pasada de polling, sin recargarla.
 
     Un evento con las fotos ya borradas de Cloudinary no se reabre (409): los
     invitados subirían fotos a una carpeta que ya se limpió y que nadie va a
@@ -415,12 +704,17 @@ def cambiar_estado_evento(
     if cambio.segundos_por_foto is not None and cambio.segundos_por_foto != evento.segundos_por_foto:
         evento.segundos_por_foto = cambio.segundos_por_foto
         cambio_algo = True
-    if (
-        cambio.max_fotos_por_dispositivo is not None
-        and cambio.max_fotos_por_dispositivo != evento.max_fotos_por_dispositivo
+    for campo in (
+        "max_fotos_por_dispositivo",
+        "pantalla_fondo",
+        "pantalla_transicion",
+        "pantalla_mostrar_nombre",
+        "pantalla_mostrar_qr",
     ):
-        evento.max_fotos_por_dispositivo = cambio.max_fotos_por_dispositivo
-        cambio_algo = True
+        valor = getattr(cambio, campo)
+        if valor is not None and valor != getattr(evento, campo):
+            setattr(evento, campo, valor)
+            cambio_algo = True
 
     if cambio_algo:
         db.commit()

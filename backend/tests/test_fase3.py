@@ -431,7 +431,8 @@ def test_pantalla(cliente_con_base, eventos):
     assert set(cuerpo.keys()) == {"evento", "config"}
     assert set(cuerpo["evento"].keys()) == {"nombre", "codigo_publico", "estado"}
     assert set(cuerpo["config"].keys()) == {
-        "segundos_por_foto", "intervalo_polling_ms", "maximo_buffer"
+        "segundos_por_foto", "intervalo_polling_ms", "maximo_buffer",
+        "fondo", "transicion", "mostrar_nombre", "mostrar_qr",
     }
     assert "id" not in cuerpo["evento"], "regla 1"
     assert cuerpo["config"]["segundos_por_foto"] == 7, "sale de la fila del evento"

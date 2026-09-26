@@ -4,10 +4,10 @@
 // para que no se note: sin parpadeos entre fotos, sin frenarse porque se cortó
 // la red, y sin que una foto rota trabe el pase.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ErrorApi, pantalla as api } from "../api/client";
-import type { FotoPantalla, Pantalla } from "../api/tipos";
+import type { EstiloPantalla, FotoPantalla, Pantalla } from "../api/tipos";
 
 /** Espera creciente cuando el polling falla. Tope en 60 s. */
 const ESPERAS_MS = [5_000, 10_000, 20_000, 40_000, 60_000];
@@ -54,6 +54,11 @@ export interface Cola {
   sinConexion: boolean;
   /** Cuántas aprobadas entraron recién. Se apaga sola. */
   llegaron: number;
+  /** Cómo se ve: fondo, transición, nombre y QR. Llega con la configuración
+   *  en cada pasada de polling, así un cambio en Ajustes se ve sin recargar.
+   *  Es el mismo objeto mientras no cambie ningún valor: se puede usar en
+   *  dependencias sin reiniciar nada en cada pasada. */
+  estilo: EstiloPantalla;
 }
 
 /** Baraja suave: intercambia algunos pares vecinos, nada más.
@@ -75,14 +80,37 @@ function reordenarLeve<T>(lista: T[]): T[] {
 }
 
 /** Espera a que la imagen esté en memoria. Sin esto hay un parpadeo gris en
- *  cada cambio, que en un proyector se nota muchísimo. */
+ *  cada cambio, que en un proyector se nota muchísimo.
+ *
+ *  Además de bajarla, la decodifica: con el corte seco (sin fundido) la foto
+ *  se pinta en el mismo cuadro en que se monta, y una foto grande de celular
+ *  sin decodificar puede dejar un cuadro en negro. Si decode() falla o no existe
+ *  (teles viejas), igual vale: la foto bajó bien. Sólo un error de carga la
+ *  da por rota. */
 function precargar(url: string): Promise<boolean> {
   return new Promise((resolver) => {
     const img = new Image();
-    img.onload = () => resolver(true);
+    img.onload = () => {
+      if (typeof img.decode !== "function") return resolver(true);
+      img.decode().then(
+        () => resolver(true),
+        () => resolver(true),
+      );
+    };
     img.onerror = () => resolver(false);
     img.src = url;
   });
+}
+
+/** El estilo con sus valores por defecto: un backend anterior a los estilos
+ *  no los manda, y un valor desconocido no puede dejar la pantalla sin foto. */
+function estiloDe(config: Partial<EstiloPantalla> | undefined) {
+  return {
+    fondo: config?.fondo === "negro" ? "negro" : "desenfocado",
+    transicion: config?.transicion === "corte" ? "corte" : "fundido",
+    mostrarNombre: config?.mostrar_nombre !== false,
+    mostrarQr: config?.mostrar_qr !== false,
+  } as const;
 }
 
 export function useCola(token: string): Cola {
@@ -110,6 +138,13 @@ export function useCola(token: string): Cola {
   const segundosPorFoto = datos?.config.segundos_por_foto;
   const intervaloPolling = datos?.config.intervalo_polling_ms;
   const maximoBuffer = datos?.config.maximo_buffer;
+
+  // Lo mismo con el estilo: se arma de nuevo sólo si cambió algún valor.
+  const { fondo, transicion, mostrarNombre, mostrarQr } = estiloDe(datos?.config);
+  const estilo = useMemo<EstiloPantalla>(
+    () => ({ fondo, transicion, mostrar_nombre: mostrarNombre, mostrar_qr: mostrarQr }),
+    [fondo, transicion, mostrarNombre, mostrarQr],
+  );
 
   // Cuenta avances. Con una sola foto, la "siguiente" es la misma y `foto` no
   // cambia: sin este contador el avance no se volvía a programar nunca, ni
@@ -314,5 +349,5 @@ export function useCola(token: string): Cola {
     return () => window.clearTimeout(id);
   }, [anterior]);
 
-  return { cargando, error, datos, foto, anterior, hayFotos, sinConexion, llegaron };
+  return { cargando, error, datos, foto, anterior, hayFotos, sinConexion, llegaron, estilo };
 }

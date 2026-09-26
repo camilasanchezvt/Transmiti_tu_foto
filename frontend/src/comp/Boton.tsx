@@ -20,9 +20,9 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 const ESTILOS: Record<Variante, string> = {
   // Como los botones de iOS: el principal es una cápsula de color sólido; el
   // resto, vidrio con el texto teñido.
-  principal: "bg-acento text-white hover:brightness-110 active:scale-[0.98] active:brightness-90",
-  secundario: "bg-panel text-white border border-borde hover:bg-white/15 active:scale-[0.98]",
-  peligro: "bg-panel text-rojo border border-borde hover:bg-white/15 active:scale-[0.98]",
+  principal: "bg-acento text-luz hover:brightness-110 active:scale-[0.98] active:brightness-90",
+  secundario: "bg-panel text-texto border border-borde hover:bg-pulsado active:scale-[0.98]",
+  peligro: "bg-panel text-rojo-tinta border border-borde hover:bg-pulsado active:scale-[0.98]",
 };
 
 /**

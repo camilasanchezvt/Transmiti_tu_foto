@@ -162,7 +162,7 @@ function Dialogo({
   return createPortal(
     <div
       className={
-        "fixed inset-0 z-50 flex justify-center overflow-y-auto bg-black/60 p-4 " +
+        "fixed inset-0 z-50 flex justify-center overflow-y-auto bg-velo p-4 " +
         "pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:items-center " +
         // En el celular, abajo, al alcance del pulgar. Con campo, arriba: el
         // teclado ocupa la mitad de abajo y taparía lo que se está escribiendo.
@@ -181,7 +181,7 @@ function Dialogo({
         aria-labelledby={idTitulo}
         aria-describedby={idMensaje}
         onKeyDown={atraparFoco}
-        className="w-full max-w-sm rounded-3xl border border-borde bg-panel p-6"
+        className="w-full max-w-sm rounded-3xl border border-borde bg-hoja p-6"
       >
         {/* Con peligro, el triángulo rojo va pegado al título, alineado a la
             primera línea: el título puede ocupar dos con un nombre largo. */}
@@ -205,7 +205,7 @@ function Dialogo({
                 no tiene dónde partirse y desbordaría a 375 px. */}
             <label htmlFor={idCampo} className="block text-sm leading-snug text-tenue">
               {aEscribir.etiqueta}
-              <span className="mt-0.5 block break-all text-base font-semibold text-white">
+              <span className="mt-0.5 block break-all text-base font-semibold text-texto">
                 {aEscribir.texto}
               </span>
             </label>
@@ -228,7 +228,7 @@ function Dialogo({
               onKeyDown={alTeclearEnCampo}
               className={
                 "mt-2 block h-12 w-full min-w-0 rounded-xl border border-borde bg-hundido px-3 " +
-                "text-base text-white outline-none focus:border-acento"
+                "text-base text-texto outline-none focus:border-acento"
               }
             />
           </div>

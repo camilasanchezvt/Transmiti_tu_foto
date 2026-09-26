@@ -22,33 +22,48 @@ borra la fila de la cuenta para siempre y sus eventos pasan a quien la elimina
 
 Nadie cambia su propio rol ni su propio estado. Así el sistema nunca se queda
 sin admins por un clic de más, y nadie se bloquea solo. El nombre propio sí.
+
+"Olvidé mi contraseña" también vive acá, en el router público: `recuperar`
+manda un link por email (Brevo, app/email.py) y `restablecer` lo canjea por
+una contraseña nueva. El resto de Mi cuenta está en routers/admin.py.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .. import email as correo
+from ..cloudinary_service import borrar_avatares_de_la_cuenta
 from ..database import get_db
 from ..deps import es_superadmin, solo_admin, solo_superadmin
 from ..errores import Codigo, ErrorApp
-from ..models import Evento, Foto, Usuario
-from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido
+from ..models import Evento, Foto, RecuperacionContrasena, Usuario
+from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido, permitido_en_todas
 from ..schemas import (
     CambioCuenta,
+    ContrasenaRestablecida,
     Cuenta,
     CuentaEliminada,
     PedidoEliminarCuenta,
+    PedidoRecuperar,
     PedidoRegistro,
+    PedidoRestablecer,
+    RecuperacionPedida,
     RegistroRecibido,
     RespuestaError,
 )
-from ..security import hashear_password
+from ..security import (
+    al_milisegundo,
+    generar_token_recuperacion,
+    hash_de_token,
+    hashear_password,
+)
 
 # Hijo del de uvicorn, que en Render sale en el log a nivel INFO (el de
 # `app.*` sólo mostraría los errores). Los mensajes empiezan con "cuentas:"
@@ -132,6 +147,173 @@ def registrar(
 
 
 # ─────────────────────────────────────────────────────────────
+# Olvidé mi contraseña — público
+# ─────────────────────────────────────────────────────────────
+
+# El link del email sirve una vez y durante una hora.
+VIGENCIA_RECUPERACION = timedelta(hours=1)
+
+# Topes por hora. Por IP frena a un script que recorre emails; por email, a
+# quien le llena la casilla a otra persona desde muchas IPs. Tres alcanzan para
+# quien no encuentra el email y lo vuelve a pedir. Cuentan igual exista o no
+# la cuenta: el 429 no delata nada.
+MAXIMO_RECUPERACIONES_POR_IP = 5
+MAXIMO_RECUPERACIONES_POR_EMAIL = 3
+VENTANA_RECUPERACION = 3600
+# Restablecer: el token tiene 256 bits y no se adivina, pero sin tope cada
+# intento con uno válido cuesta un bcrypt.
+MAXIMO_RESTABLECER_POR_IP = 10
+VENTANA_RESTABLECER = 3600
+# No pueden coincidir con una IP ni con un código público: llevan una barra.
+_CLAVE_RECUPERAR = "cuentas/recuperar"
+_CLAVE_RESTABLECER = "cuentas/restablecer"
+
+_LINK_VENCIDO = "El link ya no sirve. Pedí uno nuevo."
+
+
+def anular_recuperaciones(
+    db: Session, usuario_id: int, ahora: datetime, excepto: int | None = None
+) -> None:
+    """Anula los pedidos de recuperación que seguían vivos de la cuenta. Lo usan
+    un pedido nuevo (sólo el último link sirve), restablecer y cambiar la
+    contraseña desde Mi cuenta (un link viejo no puede pisar la contraseña
+    nueva). No confirma: va en la transacción de quien llama.
+
+    `excepto` es el pedido que se está usando: la sesión no hace autoflush, así
+    que su `usado_en` todavía no llegó a la base y este UPDATE lo anularía."""
+    condiciones = [
+        RecuperacionContrasena.usuario_id == usuario_id,
+        RecuperacionContrasena.usado_en.is_(None),
+        RecuperacionContrasena.anulado_en.is_(None),
+        RecuperacionContrasena.vence_en > ahora,
+    ]
+    if excepto is not None:
+        condiciones.append(RecuperacionContrasena.id != excepto)
+    db.execute(update(RecuperacionContrasena).where(*condiciones).values(anulado_en=ahora))
+
+
+@publico.post(
+    "/recuperar",
+    response_model=RecuperacionPedida,
+    responses={
+        422: {"model": RespuestaError, "description": "DATOS_INVALIDOS: no tiene forma de email"},
+        429: {"model": RespuestaError, "description": "DEMASIADOS_PEDIDOS"},
+    },
+    summary="Olvidé mi contraseña: pedir el link por email",
+)
+def recuperar(
+    pedido: PedidoRecuperar,
+    request: Request,
+    tareas: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> RecuperacionPedida:
+    """Responde SIEMPRE 200 `{"enviado": true}`, exista o no la cuenta: una
+    respuesta distinta serviría para averiguar qué emails están registrados.
+
+    Sólo si la cuenta existe y está `activa` se genera un token, se guarda su
+    hash con vencimiento en una hora, se anulan los pedidos anteriores que
+    seguían vivos y se manda el email. A una cuenta pendiente o de baja no le
+    llega nada: no podría entrar aunque cambiara la contraseña.
+
+    El email sale en segundo plano, después de la respuesta: esperar a Brevo
+    haría que la respuesta tarde más justo cuando la cuenta existe.
+
+    La fila de la cuenta se toma con FOR NO KEY UPDATE: dos pedidos a la vez de
+    la misma cuenta se hacen de a uno, y siempre queda un solo link vivo.
+    """
+    email = pedido.email
+    if not permitido_en_todas(
+        [
+            ((ip_del_pedido(request), _CLAVE_RECUPERAR), MAXIMO_RECUPERACIONES_POR_IP),
+            ((_CLAVE_RECUPERAR, email), MAXIMO_RECUPERACIONES_POR_EMAIL),
+        ],
+        ventana=VENTANA_RECUPERACION,
+    ):
+        raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS)
+    limpiar_cada_tanto()
+
+    usuario = db.scalar(
+        select(Usuario)
+        .where(func.lower(Usuario.email) == email)
+        .with_for_update(key_share=True)
+    )
+    if usuario is not None and usuario.estado == "activa":
+        ahora = datetime.now(timezone.utc)
+        token = generar_token_recuperacion()
+        anular_recuperaciones(db, usuario.id, ahora)
+        db.add(RecuperacionContrasena(
+            usuario_id=usuario.id,
+            token_hash=hash_de_token(token),
+            creado_en=ahora,
+            vence_en=ahora + VIGENCIA_RECUPERACION,
+        ))
+        db.commit()
+        tareas.add_task(correo.enviar_recuperacion, usuario.email, usuario.nombre, token, usuario.id)
+    else:
+        db.rollback()
+    return RecuperacionPedida(enviado=True)
+
+
+@publico.post(
+    "/restablecer",
+    response_model=ContrasenaRestablecida,
+    responses={
+        422: {"model": RespuestaError,
+              "description": "DATOS_INVALIDOS: el link ya no sirve, o la contraseña no tiene "
+                             "entre 10 y 128 caracteres"},
+        429: {"model": RespuestaError, "description": "DEMASIADOS_PEDIDOS"},
+    },
+    summary="Olvidé mi contraseña: elegir una nueva con el link del email",
+)
+def restablecer(
+    pedido: PedidoRestablecer, request: Request, db: Session = Depends(get_db)
+) -> ContrasenaRestablecida:
+    """Un token inexistente, vencido, usado, anulado o de una cuenta que ya no
+    está activa responde SIEMPRE lo mismo: 422 "El link ya no sirve. Pedí uno
+    nuevo." Distinguirlos no le sirve a quien lo usa y sí a quien prueba.
+
+    Si sirve: cambia la contraseña, marca el pedido como usado y cierra TODAS
+    las sesiones abiertas de la cuenta (`sesiones_desde`). Después hay que
+    entrar de nuevo con la contraseña nueva.
+
+    El pedido se toma con FOR UPDATE: dos canjes a la vez del mismo link se
+    hacen de a uno, y el segundo ya lo encuentra usado.
+    """
+    if not permitido(
+        ip_del_pedido(request), _CLAVE_RESTABLECER,
+        maximo=MAXIMO_RESTABLECER_POR_IP, ventana=VENTANA_RESTABLECER,
+    ):
+        raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS)
+    limpiar_cada_tanto()
+
+    ahora = datetime.now(timezone.utc)
+    recuperacion = db.scalar(
+        select(RecuperacionContrasena)
+        .where(RecuperacionContrasena.token_hash == hash_de_token(pedido.token))
+        .with_for_update()
+    )
+    if (
+        recuperacion is None
+        or recuperacion.usado_en is not None
+        or recuperacion.anulado_en is not None
+        or recuperacion.vence_en <= ahora
+    ):
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _LINK_VENCIDO)
+    usuario = db.get(Usuario, recuperacion.usuario_id, with_for_update={"key_share": True})
+    if usuario is None or usuario.estado != "activa":
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _LINK_VENCIDO)
+
+    usuario.password_hash = hashear_password(pedido.password)
+    momento = al_milisegundo(datetime.now(timezone.utc))
+    usuario.sesiones_desde = momento
+    recuperacion.usado_en = momento
+    anular_recuperaciones(db, usuario.id, momento, excepto=recuperacion.id)
+    db.commit()
+    log.info("cuentas: la cuenta %s restableció su contraseña con el link del email", usuario.id)
+    return ContrasenaRestablecida(restablecida=True)
+
+
+# ─────────────────────────────────────────────────────────────
 # Gestión de cuentas — sólo admins y superadmins
 # ─────────────────────────────────────────────────────────────
 
@@ -161,6 +343,7 @@ def _como_cuenta(usuario: Usuario, historial: tuple[int, date | None] | None) ->
         creado_en=usuario.creado_en,
         eventos=eventos,
         ultimo_evento=ultimo_evento,
+        avatar_url=usuario.avatar_url,
     )
 
 
@@ -284,16 +467,22 @@ def _email_comparable(email: str) -> str:
 def eliminar_cuenta(
     id_cuenta: int,
     pedido: PedidoEliminarCuenta,
+    tareas: BackgroundTasks,
     db: Session = Depends(get_db),
     actor: Usuario = Depends(solo_superadmin),
 ) -> CuentaEliminada:
     """La única excepción a "nada se borra" (regla 7), y sólo para superadmins.
 
     Se borra la fila de `usuarios` y nada más: el nombre, el email y la
-    contraseña. Los eventos de la cuenta, con sus fotos y videos, pasan a la
-    cuenta del superadmin que la elimina; en `fotos.moderada_por`, lo que
+    contraseña (y con ella sus pedidos de recuperación de contraseña, por ON
+    DELETE CASCADE). Los eventos de la cuenta, con sus fotos y videos, pasan a
+    la cuenta del superadmin que la elimina; en `fotos.moderada_por`, lo que
     moderó queda en NULL. Las tres cosas en una sola transacción: o pasa todo,
     o no pasa nada.
+
+    Si tenía avatar, después de confirmar se borra de Cloudinary todo
+    `avatares/{id}/`, en segundo plano y a mejor esfuerzo: si Cloudinary falla,
+    queda en el log y la cuenta igual está eliminada.
 
     | objetivo                                   | admin u organizador | superadmin |
     |--------------------------------------------|---------------------|------------|
@@ -327,6 +516,7 @@ def eliminar_cuenta(
         raise ErrorApp(Codigo.DATOS_INVALIDOS, _EMAIL_NO_COINCIDE)
 
     id_actor, id_eliminada = actor.id, cuenta.id
+    tenia_avatar = cuenta.avatar_public_id is not None
     # RETURNING: después del commit, los eventos transferidos se mezclan con los
     # del superadmin. Sus ids en el log son lo único que permite devolverlos si
     # se eliminó por error (volver a registrar la cuenta y
@@ -345,4 +535,6 @@ def eliminar_cuenta(
         "cuentas: la cuenta %s eliminó la cuenta %s; sus %s eventos pasaron a la cuenta %s: %s",
         id_actor, id_eliminada, transferidos, id_actor, ids_eventos,
     )
+    if tenia_avatar:
+        tareas.add_task(borrar_avatares_de_la_cuenta, id_eliminada)
     return CuentaEliminada(eventos_transferidos=transferidos)

@@ -490,6 +490,127 @@ endpoint nuevo, en `AGREGADOS`. Sin migración: no cambia ninguna tabla.
   archivo de este cambio. Hay que agregarle la excepción a mano (la sección 11
   de CONSTRUIR-APP.md ya tiene el texto).
 
+### Mi cuenta, olvidé mi contraseña y el estilo de la pantalla
+**Fuera de fase, 26-sep-2026.** Decisión de la usuaria. El contrato está en la
+sección 5 de CONSTRUIR-APP.md (`POST /api/cuentas/recuperar` y `/restablecer`,
+las filas de `/api/admin/yo…` y *Mi cuenta*); acá va el porqué. Siete
+endpoints nuevos, todos en `AGREGADOS`. Migración `0006_cuenta_y_recuperacion`.
+
+- **Brevo por su API HTTP, con httpx.** Sin SDK ni SMTP (regla 10): es un POST
+  con la cabecera `api-key`. Las cuatro variables son opcionales y `render.yaml`
+  no las declara: se cargan a mano en Render (guía en el README). Sin clave o
+  sin remitente, todo responde igual y queda UNA línea `email: SIN CONFIGURAR`
+  en el log (en producción, al arrancar). Todo lo del módulo empieza con
+  `email:`, como `limpieza:`, porque el log de uvicorn no muestra el logger.
+- **Enumeración.** `recuperar` responde lo mismo byte por byte exista o no la
+  cuenta, y los topes (5/h por IP, 3/h por email normalizado) cuentan igual en
+  los dos casos. El email sale con `BackgroundTasks`, DESPUÉS de la respuesta:
+  esperar a Brevo haría tardar más justo a las cuentas que existen. La prueba no
+  puede usar el TestClient, que devuelve recién cuando terminan las tareas de
+  fondo: `tests/simulados.py` llama a la app ASGI y anota cuándo sale el último
+  byte (con un Brevo que tarda 0,8 s, la respuesta sale igual enseguida). La
+  tarea recibe datos sueltos, no la fila: la sesión de base ya se cerró.
+- **El token.** `secrets.token_urlsafe(32)`; en la base, sólo su sha256 (no
+  bcrypt: 256 bits al azar no se adivinan, y así se busca por el índice único).
+  Va en el FRAGMENTO del link (`#token=`), que el navegador no manda nunca, así
+  no queda en logs de Render ni de Cloudflare. `URL_PANEL` sale de la
+  configuración y nunca de la cabecera `Host`, que la elige quien pide.
+- **Una hora, un uso, uno vivo.** Un pedido nuevo anula los vivos de esa cuenta;
+  restablecer y cambiar la contraseña desde Mi cuenta también (un link viejo no
+  puede pisar la contraseña nueva). La fila de la cuenta se toma con `FOR NO KEY
+  UPDATE` en `recuperar` (dos pedidos a la vez quedan de a uno) y la del pedido
+  con `FOR UPDATE` en `restablecer` (el segundo canje lo ve usado). **Trampa ya
+  pisada:** la sesión no hace autoflush, así que el UPDATE que anula los vivos
+  anulaba también el que se estaba usando (su `usado_en` no había llegado a la
+  base). Por eso `anular_recuperaciones(..., excepto=id)`.
+- **Un solo error para todo token que no sirve** (inventado, vacío, vencido,
+  usado, anulado, de una cuenta pendiente o de baja): "El link ya no sirve.
+  Pedí uno nuevo." Una contraseña nueva inválida es el 422 genérico y NO gasta
+  el link. A una cuenta pendiente o de baja no se le manda nada: no podría
+  entrar aunque cambiara la contraseña.
+- **Sesiones que se cierran, al milisegundo.** `usuarios.sesiones_desde`; un
+  token con `iat` anterior es 401. Al segundo no alcanzaba (una sesión abierta
+  en el mismo segundo del cambio seguía viva), y con microsegundos el `iat` no
+  entra entero en un double de JSON: `iat` va con tres decimales
+  (`security.crear_token`) y `sesiones_desde` se trunca igual. La sesión que
+  devuelve el cambio de contraseña se emite exactamente en `sesiones_desde`.
+  Las cuentas migradas nacen con NULL: nadie queda afuera al desplegar.
+- **Mi cuenta.** `PATCH /api/admin/yo` con `extra="forbid"`: `email`, `rol` o
+  `estado` en el cuerpo son 422 en vez de ignorarse, así no parece que
+  cambiaron. Hace falta al menos un valor en total (objetos vacíos no cuentan).
+  Cambiar la contraseña pide la actual y tiene tope de 5 por hora por cuenta,
+  contado antes de bcrypt: una sesión robada no sirve para adivinarla.
+- **Avatar.** Misma firma que las fotos, para `avatares/{id}`; `PUT` verifica
+  carpeta (PUBLIC_ID_AJENO, "Esta imagen no es de tu cuenta") y URL
+  (ARCHIVO_INVALIDO, la misma regla que una foto). La firma tiene tope de 20 por
+  hora por cuenta. `PUT` y `quitar` devuelven lo mismo que `GET /yo`. **Más
+  allá de lo pedido:** al reemplazar o quitar, el anterior se borra de
+  Cloudinary en segundo plano y a mejor esfuerzo; los avatares no los barre la
+  limpieza de los 30 días y quedarían para siempre. Al eliminar una cuenta que
+  tenía avatar, se borra por prefijo todo `avatares/{id}/` (con la barra final:
+  `avatares/1` alcanzaría a `avatares/12`), lo que se lleva también lo que
+  subió y no guardó. Sin credenciales de Cloudinary no se pide nada. CORS ahora
+  permite `PUT`.
+- **Predeterminados.** Se copian al crear el evento desde el DUEÑO, también si
+  lo crea un admin para otra cuenta. Los `pred_*` llevan CHECK de rango en la
+  base (3..30, 1..50); las columnas del evento siguen sin él, como antes.
+- **Estilo de pantalla.** En `EventoAdmin` y en el PATCH va plano
+  (`pantalla_fondo`…); en la config pública, sin prefijo (`fondo`, `transicion`,
+  `mostrar_nombre`, `mostrar_qr`). Los DEFAULT son lo que la pantalla mostraba.
+- **Otra salvedad a "nada se borra":** `recuperaciones_contrasena` tiene
+  `ON DELETE CASCADE` hacia `usuarios`, así eliminar una cuenta no choca con
+  sus pedidos. `db/seed.sql` y el `TRUNCATE` de `tests/conftest.py` la nombran.
+- **Tres fuentes, un esquema.** `tests/test_esquema.py` arma la base con los
+  modelos, con `db/schema.sql` y con el SQL offline de todas las migraciones
+  (sin alembic.ini: su logging reconfiguraría los loggers de las demás pruebas)
+  y compara columnas, DEFAULT, restricciones con sus nombres, índices y
+  secuencias. Los CHECK de la 0006 llevan el nombre que Postgres les pone en
+  línea para que coincidan.
+- **Al desplegar:** la migración corre sola (`alembic upgrade head` en el
+  `startCommand`). Para que salgan emails hay que cargar `BREVO_API_KEY` y
+  `EMAIL_REMITENTE` en Render; si no, después del deploy buscar `email:` en los
+  logs.
+
+### Tema claro y oscuro del panel
+**Fuera de fase, 26-sep-2026.** Decisión de la usuaria: el panel se ve en
+oscuro (el de siempre), en claro estilo iOS o en automático. Cómo está armado,
+en la sección 8 de CONSTRUIR-APP.md (*Temas*); acá, el porqué.
+
+- **Variables `R G B` y no colores de Tailwind.** Así una clase como
+  `bg-acento/15` sirve en los dos temas. Los vidrios traen su opacidad en una
+  variable `-alfa` por tema, porque el vidrio de noche (blanco al 8 %) no es el
+  de día (blanco al 72 %), y a esos no se les pone `/NN`.
+- **Tintas.** El texto chico de color usa `-tinta`. En claro son más oscuras
+  que las de alto contraste de iOS (#0040DD, #B00018, #1B6A2E, #A82C00): sobre
+  su propio tinte (un chip `bg-verde/15`) las de Apple quedaban en 3.0–4.3:1.
+  En oscuro, verde y naranja son el mismo color; azul y rojo usan las de alto
+  contraste de iOS (#409CFF, #FF6961) desde la revisión de cierre, porque
+  #0A84FF y #FF453A quedaban en 3.8–4.4:1 sobre su tinte y sobre los campos
+  hundidos. `tenue` en claro va al 0.78 y no al 0.6 de Apple, por lo mismo.
+- **`luz` y `sombra` no cambian nunca**: van sobre una foto o sobre un relleno
+  de color, que no cambian con el tema. `Foto.tsx` usa `bg-sombra` detrás del
+  desenfoque: con `bg-fondo`, en claro, los bordes quedaban con un halo gris.
+- **Sin parpadeo.** El script de `index.html` pone `data-tema` antes del primer
+  cuadro con la copia de `localStorage`; `/api/admin/yo` lo confirma después.
+  El invitado y la pantalla son siempre oscuros: el mismo script para el primer
+  cuadro y `comp/SiempreOscuro` mientras están montados.
+- **Lo que queda debajo de 4.5:1, a propósito:** el texto blanco sobre los
+  rellenos de color de sistema. Botón principal: 4.0:1 sobre #007AFF (claro) y
+  3.65:1 sobre #0A84FF (oscuro); el globito rojo de Cuentas, 3.55 y 3.41. Son
+  los colores que pidió la usuaria y los de iOS; el texto es de 18 px en
+  negrita media y pasa el mínimo de texto grande (3:1). Si algún día se quiere
+  AA estricto, el cambio es un token de relleno aparte (`#0071E3` da 4.7:1 con
+  blanco), no tocar `acento`.
+- **Revisión de cierre medida en un Chrome headless**, no en el panel de
+  Claude: ahí `requestAnimationFrame` no corre y la foto de la pantalla, que
+  entra con un cuadro de retraso para que se vea el fundido, queda
+  transparente. No pasa en un navegador de verdad (sí con la pestaña oculta,
+  a propósito: entra al volver).
+- **Contraseña nueva con un link nuevo en la misma pestaña.** Pegar otro link
+  cambia sólo el fragmento: el navegador no recarga y la página seguía con el
+  token viejo y dejaba el nuevo a la vista. Ahora la página se vuelve a montar
+  con la `key` del fragmento que ve React Router.
+
 ---
 
 ## Pendientes de decidir

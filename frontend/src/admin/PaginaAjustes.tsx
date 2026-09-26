@@ -28,7 +28,7 @@ import {
 } from "@heroicons/react/20/solid";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
-import type { EstadoEvento, EventoAdmin, VideoEvento } from "../api/tipos";
+import type { EstadoEvento, EventoAdmin, FondoPantalla, TransicionPantalla, VideoEvento } from "../api/tipos";
 import Boton, { claseBoton } from "../comp/Boton";
 import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
@@ -291,6 +291,13 @@ export default function PaginaAjustes() {
 
             <Configuracion key={evento.id} evento={evento} onGuardado={setEvento} alPerderSesion={alPerderSesion} />
 
+            <EstiloDeLaPantalla
+              key={`estilo-${evento.id}`}
+              evento={evento}
+              onGuardado={setEvento}
+              alPerderSesion={alPerderSesion}
+            />
+
             {/* El QR, el link y la pantalla viven en la tarjeta del evento, en
                 Eventos: no se duplican acá. El hash le dice a la lista cuál
                 abrir. Un evento del historial no los tiene: terminado o sin
@@ -301,7 +308,7 @@ export default function PaginaAjustes() {
                 to={rutaACompartir(evento, lista)}
                 className={
                   "flex min-h-16 items-center gap-4 rounded-3xl border border-borde bg-panel px-5 py-4 " +
-                  "transition hover:bg-white/15 active:scale-[0.99] " +
+                  "transition hover:bg-pulsado active:scale-[0.99] " +
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
                 }
               >
@@ -407,7 +414,7 @@ export default function PaginaAjustes() {
           <>
             {t.confirmarMensaje}
             {errorEstado ? (
-              <span role="alert" className="mt-3 block text-rojo">
+              <span role="alert" className="mt-3 block text-rojo-tinta">
                 {mensajeDe(errorEstado)}
               </span>
             ) : null}
@@ -446,7 +453,7 @@ function Seccion({ titulo, children }: { titulo: string; children: ReactNode }) 
 /** Un error chico al lado de lo que falló, no una pantalla entera. */
 function ErrorEnLinea({ error, reintentar }: { error: unknown; reintentar?: () => void }) {
   return (
-    <div role="alert" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-rojo">
+    <div role="alert" className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-rojo-tinta">
       <p>{mensajeDe(error)}</p>
       {reintentar && (
         <BotonChico icono={ReintentarMini} onClick={reintentar}>
@@ -568,7 +575,7 @@ function Configuracion({
         </Boton>
         {/* Siempre en el DOM: una región viva que aparece de golpe no se
             anuncia en todos los lectores de pantalla. */}
-        <p role="status" className="flex items-center justify-center gap-1 text-sm text-verde sm:justify-start">
+        <p role="status" className="flex items-center justify-center gap-1 text-sm text-verde-tinta sm:justify-start">
           {guardado && (
             <>
               <ListoMini aria-hidden className={claseIconoChip} />
@@ -618,7 +625,7 @@ function Ajuste({
 
   const paso =
     "flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-borde bg-panel " +
-    "text-white transition hover:bg-white/15 active:scale-[0.94] " +
+    "text-texto transition hover:bg-pulsado active:scale-[0.94] " +
     "disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 " +
     "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento";
 
@@ -628,7 +635,7 @@ function Ajuste({
         <label htmlFor={idCampo} className="text-base font-medium">
           {etiqueta}
         </label>
-        <p id={idAyuda} className={`mt-0.5 text-sm ${valido ? "text-tenue" : "text-naranja"}`}>
+        <p id={idAyuda} className={`mt-0.5 text-sm ${valido ? "text-tenue" : "text-naranja-tinta"}`}>
           {valido ? ayuda : t.fueraDeRango(rango.min, rango.max)}
         </p>
       </div>
@@ -654,7 +661,7 @@ function Ajuste({
           onChange={(e) => onCambiar(e.target.value.replace(/\D/g, ""))}
           className={
             "h-12 w-16 rounded-xl border bg-hundido px-2 text-center text-lg font-semibold tabular-nums " +
-            `text-white outline-none focus:border-acento ${valido ? "border-borde" : "border-naranja"}`
+            `text-texto outline-none focus:border-acento ${valido ? "border-borde" : "border-naranja"}`
           }
         />
         <button
@@ -669,6 +676,322 @@ function Ajuste({
         </button>
       </div>
     </div>
+  );
+}
+
+// ── Estilo de la pantalla ────────────────────────────────────
+
+type Estilo = Pick<
+  EventoAdmin,
+  "pantalla_fondo" | "pantalla_transicion" | "pantalla_mostrar_nombre" | "pantalla_mostrar_qr"
+>;
+
+const CAMPOS_ESTILO = [
+  "pantalla_fondo",
+  "pantalla_transicion",
+  "pantalla_mostrar_nombre",
+  "pantalla_mostrar_qr",
+] as const satisfies readonly (keyof Estilo)[];
+
+/** Con los mismos valores por defecto que la base, por si llega un evento de
+ *  un backend anterior a los estilos: un control sin nada elegido no se
+ *  entiende. */
+function estiloDe(e: EventoAdmin): Estilo {
+  return {
+    pantalla_fondo: e.pantalla_fondo ?? "desenfocado",
+    pantalla_transicion: e.pantalla_transicion ?? "fundido",
+    pantalla_mostrar_nombre: e.pantalla_mostrar_nombre ?? true,
+    pantalla_mostrar_qr: e.pantalla_mostrar_qr ?? true,
+  };
+}
+
+/** Sólo lo que cambió, para el PATCH. null si no cambió nada. */
+function diferencia(deseado: Estilo, guardado: Estilo): Partial<Estilo> | null {
+  const cambio: Partial<Estilo> = {};
+  for (const campo of CAMPOS_ESTILO) {
+    if (deseado[campo] !== guardado[campo]) Object.assign(cambio, { [campo]: deseado[campo] });
+  }
+  return Object.keys(cambio).length > 0 ? cambio : null;
+}
+
+/**
+ * Fondo, transición, nombre y QR de la pantalla de este evento. Cada control
+ * se guarda al tocarlo, como un switch de iOS, y la pantalla lo toma en su
+ * próxima pasada.
+ *
+ * Se guarda de a un pedido por vez. Si se tocan varias cosas seguidas mientras
+ * uno viaja, al volver se manda de una vez todo lo que falte: dos pedidos en
+ * paralelo pueden llegar al revés y dejar guardado el penúltimo toque. Si algo
+ * falla, los controles vuelven a lo que quedó guardado: no pueden mostrar algo
+ * que la pantalla no tiene.
+ */
+function EstiloDeLaPantalla({
+  evento,
+  onGuardado,
+  alPerderSesion,
+}: {
+  evento: EventoAdmin;
+  onGuardado: (e: EventoAdmin) => void;
+  alPerderSesion: AlPerderSesion;
+}) {
+  const [elegido, setElegido] = useState<Estilo>(() => estiloDe(evento));
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  // Lo que muestran los controles y lo que tiene el servidor. En refs: los lee
+  // el guardado mientras espera respuestas, y el estado de un render viejo no
+  // sirve para eso.
+  const deseado = useRef<Estilo>(elegido);
+  const enServidor = useRef<Estilo>(elegido);
+  const enVuelo = useRef(false);
+  const montado = useRef(true);
+  const reloj = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    montado.current = true;
+    return () => {
+      montado.current = false;
+      window.clearTimeout(reloj.current);
+    };
+  }, []);
+
+  async function sincronizar() {
+    // El que ya viaja se lleva este cambio al volver.
+    if (enVuelo.current) return;
+    enVuelo.current = true;
+    setGuardando(true);
+    setGuardado(false);
+    setError(null);
+    window.clearTimeout(reloj.current);
+    try {
+      let pedido = deseado.current;
+      let cambio = diferencia(pedido, enServidor.current);
+      while (cambio) {
+        const ev = await admin.configurarEvento(evento.id, cambio);
+        enServidor.current = estiloDe(ev);
+        if (montado.current) onGuardado(ev);
+        // Sin toques nuevos mientras viajaba, termina acá aunque el servidor
+        // haya devuelto otra cosa: insistir sería un bucle.
+        if (deseado.current === pedido) break;
+        pedido = deseado.current;
+        cambio = diferencia(pedido, enServidor.current);
+      }
+      // Lo que quedó guardado de verdad, que es lo que va a ver la pantalla.
+      deseado.current = enServidor.current;
+      if (!montado.current) return;
+      setElegido(enServidor.current);
+      setGuardado(true);
+      reloj.current = window.setTimeout(() => setGuardado(false), 2500);
+    } catch (e) {
+      deseado.current = enServidor.current;
+      if (!montado.current) return;
+      setElegido(enServidor.current);
+      if (!alPerderSesion(e)) setError(e);
+    } finally {
+      enVuelo.current = false;
+      if (montado.current) setGuardando(false);
+    }
+  }
+
+  function cambiar<K extends keyof Estilo>(campo: K, valor: Estilo[K]) {
+    const nuevo = { ...deseado.current, [campo]: valor };
+    deseado.current = nuevo;
+    setElegido(nuevo);
+    void sincronizar();
+  }
+
+  return (
+    <div className={TARJETA}>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <h3 className="text-lg font-semibold">{t.estiloTitulo}</h3>
+        {/* Siempre en el DOM, como el de la tarjeta de arriba. */}
+        <p role="status" className="flex items-center gap-1 text-sm">
+          {guardando ? (
+            <span className="text-tenue">{t.guardando}</span>
+          ) : guardado ? (
+            <span className="flex items-center gap-1 text-verde-tinta">
+              <ListoMini aria-hidden className={claseIconoChip} />
+              {comun.verbos.guardado}
+            </span>
+          ) : null}
+        </p>
+      </div>
+      <p className="mt-1 text-sm text-tenue">{t.estiloDetalle}</p>
+
+      <div className="mt-1 divide-y divide-borde">
+        <Segmentado<FondoPantalla>
+          etiqueta={t.fondo}
+          ayuda={t.fondoAyuda[elegido.pantalla_fondo]}
+          opciones={t.fondoOpciones}
+          valor={elegido.pantalla_fondo}
+          onCambiar={(v) => cambiar("pantalla_fondo", v)}
+        />
+        <Segmentado<TransicionPantalla>
+          etiqueta={t.transicion}
+          ayuda={t.transicionAyuda[elegido.pantalla_transicion]}
+          opciones={t.transicionOpciones}
+          valor={elegido.pantalla_transicion}
+          onCambiar={(v) => cambiar("pantalla_transicion", v)}
+        />
+        <Interruptor
+          etiqueta={t.mostrarNombre}
+          ayuda={t.mostrarNombreAyuda}
+          activo={elegido.pantalla_mostrar_nombre}
+          onCambiar={(v) => cambiar("pantalla_mostrar_nombre", v)}
+        />
+        <Interruptor
+          etiqueta={t.mostrarQr}
+          ayuda={t.mostrarQrAyuda}
+          activo={elegido.pantalla_mostrar_qr}
+          onCambiar={(v) => cambiar("pantalla_mostrar_qr", v)}
+        />
+      </div>
+      {error ? <ErrorEnLinea error={error} /> : null}
+
+      {/* El link va en la frase, como en los pies de los Ajustes de iOS. Es
+          inline-block para que su alto sea el del renglón (20 px) y no el de
+          la letra: con py-3 llega a 44 px para el dedo. El -my-3 le devuelve
+          ese relleno al renglón, que no se mueve. */}
+      <p className="mt-2 border-t border-borde pt-4 text-sm text-tenue">
+        {t.predeterminados.antes}
+        <Link
+          to="/admin/cuenta"
+          className="-my-3 inline-block py-3 font-medium text-acento-tinta hover:underline focus:outline-none focus-visible:underline"
+        >
+          {t.predeterminados.enlace}
+        </Link>
+        {t.predeterminados.despues}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Un control segmentado de iOS: dos o más opciones, una elegida. Por dentro
+ * son radios nativos, así el teclado (flechas) y los lectores de pantalla
+ * andan solos. En el celular va a todo el ancho debajo de la etiqueta; en la
+ * compu, a la derecha.
+ */
+function Segmentado<V extends string>({
+  etiqueta,
+  ayuda,
+  opciones,
+  valor,
+  onCambiar,
+}: {
+  etiqueta: string;
+  ayuda: string;
+  opciones: Record<V, string>;
+  valor: V;
+  onCambiar: (v: V) => void;
+}) {
+  const idEtiqueta = useId();
+  const idAyuda = useId();
+  const grupo = useId();
+  const lista = Object.entries(opciones) as [V, string][];
+
+  return (
+    <div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0">
+        <p id={idEtiqueta} className="text-base font-medium">
+          {etiqueta}
+        </p>
+        <p id={idAyuda} className="mt-0.5 text-sm text-tenue">
+          {ayuda}
+        </p>
+      </div>
+      <div
+        role="radiogroup"
+        aria-labelledby={idEtiqueta}
+        aria-describedby={idAyuda}
+        className="grid shrink-0 auto-cols-fr grid-flow-col gap-1 rounded-full bg-hundido p-1 sm:w-64"
+      >
+        {lista.map(([opcion, texto]) => {
+          const activa = opcion === valor;
+          return (
+            <label key={opcion} className="relative min-w-0">
+              <input
+                type="radio"
+                name={grupo}
+                value={opcion}
+                checked={activa}
+                onChange={() => onCambiar(opcion)}
+                className="peer sr-only"
+              />
+              <span
+                className={
+                  "flex min-h-11 cursor-pointer select-none items-center justify-center rounded-full px-3 " +
+                  "text-center text-sm font-medium leading-tight transition " +
+                  "peer-focus-visible:ring-2 peer-focus-visible:ring-acento " +
+                  (activa ? "bg-elegido text-texto shadow-sm shadow-sombra/10" : "text-tenue hover:text-texto")
+                }
+              >
+                {texto}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Un switch de iOS: se toca la fila entera (44 px o más de alto), no sólo la
+ * pastilla. Verde cuando está prendido, como en iOS, y la perilla blanca en
+ * los dos temas.
+ */
+function Interruptor({
+  etiqueta,
+  ayuda,
+  activo,
+  onCambiar,
+}: {
+  etiqueta: string;
+  ayuda: string;
+  activo: boolean;
+  onCambiar: (v: boolean) => void;
+}) {
+  const idEtiqueta = useId();
+  const idAyuda = useId();
+
+  return (
+    <label className="relative flex min-h-11 cursor-pointer items-center justify-between gap-4 py-4">
+      <span className="min-w-0">
+        <span id={idEtiqueta} className="block text-base font-medium">
+          {etiqueta}
+        </span>
+        <span id={idAyuda} className="mt-0.5 block text-sm text-tenue">
+          {ayuda}
+        </span>
+      </span>
+      <input
+        type="checkbox"
+        role="switch"
+        checked={activo}
+        onChange={(e) => onCambiar(e.target.checked)}
+        aria-labelledby={idEtiqueta}
+        aria-describedby={idAyuda}
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden
+        className={
+          "relative h-[31px] w-[51px] shrink-0 rounded-full transition-colors duration-200 motion-reduce:transition-none " +
+          "peer-focus-visible:ring-2 peer-focus-visible:ring-acento " +
+          (activo ? "bg-verde" : "bg-hundido")
+        }
+      >
+        <span
+          className={
+            "absolute left-0.5 top-0.5 h-[27px] w-[27px] rounded-full bg-luz shadow-md shadow-sombra/25 " +
+            "transition-transform duration-200 motion-reduce:transition-none " +
+            (activo ? "translate-x-5" : "translate-x-0")
+          }
+        />
+      </span>
+    </label>
   );
 }
 
@@ -763,7 +1086,7 @@ function ResumenFotos({
   const hayPendientes = evento.pendientes > 0 && !borradas;
   const cifras: { etiqueta: string; valor: number; color: string }[] = [
     // Pendientes en naranja sólo si hay: es lo único que espera a alguien.
-    { etiqueta: t.pendientes, valor: evento.pendientes, color: hayPendientes ? "text-naranja" : "" },
+    { etiqueta: t.pendientes, valor: evento.pendientes, color: hayPendientes ? "text-naranja-tinta" : "" },
     { etiqueta: t.aprobadas, valor: evento.aprobadas, color: "" },
     { etiqueta: t.rechazadas, valor: evento.rechazadas, color: "" },
   ];
@@ -941,7 +1264,7 @@ function VideoDelEvento({
           )}
 
           {estado === "fallo" && (
-            <p role="alert" className="mt-4 text-sm text-rojo">
+            <p role="alert" className="mt-4 text-sm text-rojo-tinta">
               {t.videoFallo}
             </p>
           )}
@@ -952,10 +1275,10 @@ function VideoDelEvento({
               controls
               playsInline
               preload="metadata"
-              className="mt-4 aspect-video w-full rounded-2xl bg-black"
+              className="mt-4 aspect-video w-full rounded-2xl bg-sombra"
             />
           )}
-          {desactualizado && <p className="mt-3 text-sm text-naranja">{t.videoDesactualizado}</p>}
+          {desactualizado && <p className="mt-3 text-sm text-naranja-tinta">{t.videoDesactualizado}</p>}
 
           {estado !== "procesando" && (
             <div className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -1050,7 +1373,7 @@ function EstadoDescarga({ bajando, error }: Pick<DescargaFotos, "bajando" | "err
   return (
     <>
       {bajando && (
-        <p role="status" className="mt-3 flex items-center gap-2 text-sm text-acento">
+        <p role="status" className="mt-3 flex items-center gap-2 text-sm text-acento-tinta">
           <Girando />
           {t.preparando}
         </p>

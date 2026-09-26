@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { ErrorApi, admin, tokenDeSesion } from "../api/client";
 import Boton from "../comp/Boton";
@@ -18,11 +18,17 @@ import { olvidarSesion } from "./useSesion";
  *   diría qué emails ya estaban registrados.
  * - 403: cuenta dada de baja (sólo con la contraseña correcta).
  * - 429: demasiados intentos seguidos.
+ *
+ * Debajo del botón, "¿Olvidaste tu contraseña?" lleva a /admin/olvide con el
+ * email que ya estaba escrito, así no hay que escribirlo dos veces. Viaja en
+ * el estado del historial y no en la dirección. De vuelta de Olvidé, llega
+ * igual y el campo aparece completo.
  */
 export default function PaginaLogin() {
   const navegar = useNavigate();
+  const ubicacion = useLocation();
   const idTitulo = useId();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => emailRecibido(ubicacion.state));
   const [password, setPassword] = useState("");
   const [faltanDatos, setFaltanDatos] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -152,6 +158,15 @@ export default function PaginaLogin() {
         <Boton type="submit" cargando={enviando} className="mt-1">
           {acceso.entrar.boton}
         </Boton>
+
+        {/* El link mide 44 px pero la letra 24: el -my-2 le saca el aire de
+            más para que no quede lejos del botón ni del borde. */}
+        <PieAcceso
+          a="/admin/olvide"
+          estado={email.trim() ? { email: email.trim() } : undefined}
+          texto={acceso.entrar.olvide}
+          className="-my-2"
+        />
       </form>
 
       <PieAcceso
@@ -161,4 +176,10 @@ export default function PaginaLogin() {
       />
     </MarcoAcceso>
   );
+}
+
+/** El email que manda Olvidé mi contraseña al volver, si mandó uno. */
+function emailRecibido(estado: unknown): string {
+  const email = (estado as { email?: unknown } | null)?.email;
+  return typeof email === "string" ? email : "";
 }

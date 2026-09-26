@@ -8,6 +8,8 @@ Convenciones de la sección 4 de CONSTRUIR-APP.md:
   cuenta tampoco se borra: se da de baja, y sus eventos y fotos quedan. La
   única excepción: un superadmin puede eliminar una cuenta para siempre, y sus
   eventos pasan a él (DELETE /api/admin/cuentas/{id}, routers/cuentas.py).
+  Con la cuenta se van también sus pedidos de recuperación de contraseña
+  (ON DELETE CASCADE): son datos de la persona, no de ningún evento.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -33,6 +36,9 @@ ESTADOS_EVENTO = ("borrador", "activo", "cerrado")
 ESTADOS_FOTO = ("pendiente", "aprobada", "rechazada")
 ROLES_USUARIO = ("superadmin", "admin", "organizador")
 ESTADOS_CUENTA = ("pendiente", "activa", "baja")
+TEMAS_PANEL = ("oscuro", "claro", "automatico")
+FONDOS_PANTALLA = ("desenfocado", "negro")
+TRANSICIONES_PANTALLA = ("fundido", "corte")
 
 
 class Base(DeclarativeBase):
@@ -66,6 +72,25 @@ class Usuario(Base):
         CheckConstraint(
             "estado IN ('pendiente','activa','baja')", name="usuarios_estado_check"
         ),
+        CheckConstraint(
+            "tema IN ('oscuro','claro','automatico')", name="usuarios_tema_check"
+        ),
+        CheckConstraint(
+            "pred_segundos_por_foto BETWEEN 3 AND 30",
+            name="usuarios_pred_segundos_por_foto_check",
+        ),
+        CheckConstraint(
+            "pred_max_fotos_por_dispositivo BETWEEN 1 AND 50",
+            name="usuarios_pred_max_fotos_por_dispositivo_check",
+        ),
+        CheckConstraint(
+            "pred_pantalla_fondo IN ('desenfocado','negro')",
+            name="usuarios_pred_pantalla_fondo_check",
+        ),
+        CheckConstraint(
+            "pred_pantalla_transicion IN ('fundido','corte')",
+            name="usuarios_pred_pantalla_transicion_check",
+        ),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
@@ -82,6 +107,42 @@ class Usuario(Base):
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
+    # Un token de sesión emitido ANTES de este momento ya no sirve
+    # (`usuario_actual`, deps.py). Se pone al restablecer la contraseña por
+    # email y al cambiarla desde Mi cuenta: así se cierran todas las sesiones
+    # abiertas. Va truncado al milisegundo, como el `iat` de los tokens.
+    sesiones_desde: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # La foto de la cuenta. Vive en Cloudinary, dentro de `avatares/{id}/`.
+    avatar_public_id: Mapped[str | None] = mapped_column(Text)
+    avatar_url: Mapped[str | None] = mapped_column(Text)
+
+    # El tema del panel. `automatico` sigue al del sistema operativo.
+    tema: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'automatico'")
+    )
+
+    # Predeterminados: se copian a cada evento nuevo de esta cuenta, también si
+    # un admin se lo crea. Cambiarlos no toca los eventos que ya existen.
+    pred_segundos_por_foto: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("7")
+    )
+    pred_max_fotos_por_dispositivo: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("10")
+    )
+    pred_pantalla_fondo: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'desenfocado'")
+    )
+    pred_pantalla_transicion: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'fundido'")
+    )
+    pred_pantalla_nombre: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    pred_pantalla_qr: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+
     eventos: Mapped[list["Evento"]] = relationship(back_populates="usuario")
 
 
@@ -93,6 +154,13 @@ class Evento(Base):
         ),
         CheckConstraint(
             "video_estado IN ('procesando','listo','fallo')", name="eventos_video_estado_check"
+        ),
+        CheckConstraint(
+            "pantalla_fondo IN ('desenfocado','negro')", name="eventos_pantalla_fondo_check"
+        ),
+        CheckConstraint(
+            "pantalla_transicion IN ('fundido','corte')",
+            name="eventos_pantalla_transicion_check",
         ),
     )
 
@@ -136,6 +204,22 @@ class Evento(Base):
     # fotos y todos sus videos (app/limpieza.py). Las filas quedan: esto marca
     # que los archivos ya no existen. NULL mientras no se borraron.
     fotos_borradas_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Cómo se ve la pantalla del proyector. Al crear el evento se copian de los
+    # predeterminados del dueño; la pantalla los toma en su próxima pasada de
+    # polling, sin recargar. `desenfocado`: la misma foto, borrosa, de fondo.
+    pantalla_fondo: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'desenfocado'")
+    )
+    pantalla_transicion: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'fundido'")
+    )
+    pantalla_mostrar_nombre: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    pantalla_mostrar_qr: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
 
     usuario: Mapped[Usuario] = relationship(back_populates="eventos")
     fotos: Mapped[list["Foto"]] = relationship(
@@ -187,3 +271,35 @@ class Foto(Base):
     )
 
     evento: Mapped[Evento] = relationship(back_populates="fotos")
+
+
+class RecuperacionContrasena(Base):
+    """Un pedido de "olvidé mi contraseña" (POST /api/cuentas/recuperar).
+
+    Se guarda el HASH del token (sha256), nunca el token: el token viaja sólo
+    en el email. Con una copia de la base no se restablece ninguna cuenta.
+
+    Sirve una vez (`usado_en`) y durante una hora (`vence_en`). Un pedido nuevo
+    de la misma cuenta anula los anteriores que seguían vivos (`anulado_en`), y
+    cambiar la contraseña también. Nada se borra en el uso normal: la fila
+    queda como historial. Sólo se va con la cuenta, si un superadmin la elimina
+    (ON DELETE CASCADE).
+    """
+
+    __tablename__ = "recuperaciones_contrasena"
+    __table_args__ = (
+        # Para anular los pedidos vivos de una cuenta y para el CASCADE.
+        Index("idx_recuperaciones_usuario", "usuario_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    usuario_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    creado_en: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    vence_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    usado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    anulado_en: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

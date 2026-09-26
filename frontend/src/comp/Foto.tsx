@@ -13,6 +13,10 @@ interface Props {
  * Nunca deforma la foto: entra completa y centrada. El espacio que sobra se
  * llena con la misma imagen ampliada y desenfocada, que en un proyector se ve
  * mucho mejor que una banda negra.
+ *
+ * El escenario va sobre `bg-sombra` (negro en los dos temas), no sobre
+ * `bg-fondo`: el desenfoque deja los bordes semitransparentes y, en tema
+ * claro, se mezclaría con el gris del fondo y quedaría un halo lavado.
  */
 export default function Foto({ url, ancho, alto, alt = "", className = "", onError }: Props) {
   const [rota, setRota] = useState(false);
@@ -20,7 +24,7 @@ export default function Foto({ url, ancho, alto, alt = "", className = "", onErr
   if (rota) return null;
 
   return (
-    <div className={`relative h-full w-full overflow-hidden bg-fondo ${className}`}>
+    <div className={`relative h-full w-full overflow-hidden bg-sombra ${className}`}>
       <div
         aria-hidden
         className="absolute inset-0 scale-110 bg-cover bg-center blur-2xl brightness-50"

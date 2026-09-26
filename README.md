@@ -149,6 +149,9 @@ Rutas útiles una vez que exista el frontend:
     /p/8MX4OqECds7IhkCmlK7vub76PntouGz1           # pantalla, evento cerrado
     /admin/login                                  # panel
     /admin/registro                               # pedir una cuenta
+    /admin/olvide                                 # olvidé mi contraseña
+    /admin/restablecer#token=...                  # el link del email
+    /admin/cuenta                                 # Mi cuenta
     /admin                                        # eventos vigentes
     /admin/historial                              # terminados o de fecha pasada
     /admin/cuentas                                # sólo admin
@@ -167,6 +170,111 @@ Fase 4 es que el ZIP tiene que armarse descargando `url`, no resolviendo
 `public_id` contra la cuenta propia de Cloudinary.
 
 ---
+
+## Recuperar la contraseña por email (Brevo)
+
+*Olvidé mi contraseña* manda un link por email con **Brevo**. Sin configurarlo,
+la app anda igual y el panel dice lo mismo que siempre, pero no sale ningún email
+(en el log de Render queda `email: SIN CONFIGURAR`). Para activarlo:
+
+1. **Crear la cuenta** en [brevo.com](https://www.brevo.com). El plan gratuito
+   alcanza de sobra: son unos pocos emails por mes.
+2. **Verificar el remitente.** En Brevo, *Senders, Domains & Dedicated IPs →
+   Senders → Add a sender*: el email desde el que salen los mensajes (uno
+   creado para la app) y el nombre *Transmití tu foto*. Brevo manda un código a
+   esa casilla; hasta confirmarlo, rechaza los envíos.
+3. **Crear la API key.** *SMTP & API → API Keys → Generate a new API key*. Se ve
+   una sola vez: copiala en ese momento. Empieza con `xkeysib-`.
+4. **Cargarla en Render.** *transmitifoto-api → Environment → Add Environment
+   Variable*:
+   - `BREVO_API_KEY`: la clave del paso 3.
+   - `EMAIL_REMITENTE`: el email verificado en el paso 2.
+   - Opcionales: `EMAIL_REMITENTE_NOMBRE` (por defecto *Transmití tu foto*) y
+     `URL_PANEL`, la dirección del panel para el link (por defecto, el primer
+     origen `https` de `CORS_ORIGINS`).
+
+   Guardar reinicia el servicio. No van en `render.yaml` ni en ningún archivo
+   del repositorio: la clave es secreta y nunca llega al navegador.
+5. **Probar.** En `/admin/olvide`, pedir el link para una cuenta activa.
+
+**Si no llega, revisá la carpeta de spam** (y *Promociones*, en Gmail). Un
+remitente recién verificado, sin dominio propio autenticado, suele caer ahí las
+primeras veces; marcarlo como *No es spam* ayuda. Si tampoco está en spam,
+buscá `email:` en los logs de Render: ahí dice qué respondió Brevo (por ejemplo,
+un remitente sin verificar o una clave mal copiada).
+
+El link sirve una vez y vence en una hora; pedir otro anula el anterior.
+Después de elegir la contraseña nueva se cierran todas las sesiones de la
+cuenta y hay que entrar de nuevo.
+
+## Volver al deploy anterior
+
+Render corre `alembic upgrade head` antes de levantar la API. Si el deploy
+nuevo trajo una migración, el botón **Rollback** de Render solo no alcanza: el
+código viejo no conoce la versión de la base, alembic corta con
+`Can't locate revision identified by '0006_cuenta_y_recuperacion'` y la API
+vieja no arranca. No se cae nada, porque Render deja viva la versión nueva,
+pero tampoco podés volver.
+
+La salida es anotar en la base la versión que conoce el código viejo, con
+`alembic stamp`. No toca ninguna tabla: cambia sólo esa anotación. Los
+comandos van desde tu máquina, con el venv activado, el repo en el commit
+**nuevo** (el único que conoce las dos versiones) y la misma `DATABASE_URL` que
+tiene Render (*transmitifoto-api → Environment*). El ejemplo es el de la 0006;
+con otra migración, usá su `revision` y su `down_revision`. `alembic current`
+te dice en cuál está la base.
+
+**Volver atrás, sin perder nada:**
+
+1. **Rollback del panel** (*transmitifoto → Events*, o un deploy manual del
+   commit anterior). Va primero: el panel nuevo le pide a la API cosas que la
+   vieja no tiene, y *Mi cuenta* se rompe. El panel viejo, en cambio, anda con
+   la API nueva: a la API sólo se le agregaron cosas.
+2. **Anotá la versión vieja:**
+
+       cd backend && DATABASE_URL='<la de Render>' alembic stamp 0005_fotos_borradas
+
+3. **Enseguida, Rollback de la API** (*transmitifoto-api → Events*). No dejes
+   pasar tiempo entre 2 y 3: si la API nueva se reinicia en el medio (por
+   ejemplo, al despertarse), ya no arranca.
+
+Mientras corre lo viejo:
+
+- Lo nuevo queda guardado (avatares, temas, predeterminados y estilos de
+  pantalla) y vuelve con el próximo deploy.
+- No hay *Olvidé mi contraseña* ni *Mi cuenta*.
+- Las sesiones que se cerraron al cambiar o restablecer una contraseña vuelven a
+  servir hasta que vencen (12 horas).
+- Los eventos nuevos se crean con la pantalla de siempre, no con los
+  predeterminados de la cuenta.
+
+**Volver a lo nuevo**, ya corregido:
+
+1. **Anotá la versión nueva**, justo antes de desplegar:
+
+       cd backend && DATABASE_URL='<la de Render>' alembic stamp 0006_cuenta_y_recuperacion
+
+2. **Desplegá la API y después el panel**, como siempre. `upgrade head` no
+   tiene nada que hacer y la API arranca.
+
+Si te olvidás del paso 1, el deploy falla con `DuplicateColumn ... already
+exists` y queda viva la versión vieja, sin tocar la base: hacé el stamp y
+desplegá de nuevo. Si el deploy falla por otra cosa, volvé a
+`stamp 0005_fotos_borradas`: con la base anotada en 0006, la API vieja no
+arranca la próxima vez que se reinicie, y en el plan gratuito eso pasa cada vez
+que se despierta.
+
+**Borrar las columnas nuevas** casi nunca hace falta: el código viejo anda con
+ellas. Si igual lo querés, hacelo con lo viejo ya andando y sin un evento en
+curso:
+
+    cd backend && export DATABASE_URL='<la de Render>' && alembic stamp 0006_cuenta_y_recuperacion && alembic downgrade 0005_fotos_borradas
+
+Se pierden los avatares (las imágenes quedan en Cloudinary), los temas, los
+predeterminados, los estilos de pantalla y el historial de recuperaciones.
+**Nunca con lo nuevo en marcha:** la API nueva lee esas columnas y todo daría
+error, también la pantalla del salón y la subida de los invitados. Después, el
+próximo deploy nuevo las vuelve a crear solo, sin stamp.
 
 ## Vincular una tele
 
@@ -190,9 +298,12 @@ depende del wifi ni del navegador que traiga.
 
 ## Trampas conocidas
 
-Están todas en [CLAUDE.md](CLAUDE.md), pero las dos que más tiempo hacen perder:
+Están todas en [CLAUDE.md](CLAUDE.md), pero las que más tiempo hacen perder:
 
 - **Supabase:** usar la cadena del pooler en modo sesión. La conexión directa
   resuelve por IPv6 y falla desde Render con un error que parece de credenciales.
+- **Contraseña de la base con `@ : / # ? %`:** en `DATABASE_URL` va codificada
+  (`@` es `%40`, `#` es `%23`, `%` es `%25`). Sin codificar, la URL se lee mal y
+  la conexión falla con un error que no hace pensar en la contraseña.
 - **Render gratuito:** el servicio se duerme. Abrir la pantalla diez minutos
   antes del evento.

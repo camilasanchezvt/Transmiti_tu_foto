@@ -19,7 +19,8 @@ Deploy: Render.
 
 1. El `id` interno de un evento NUNCA aparece en una respuesta pública.
    Hacia afuera existen `codigo_publico` (subir) y `token_pantalla` (leer).
-2. `CLOUDINARY_API_SECRET` vive sólo en el backend. Jamás en una variable VITE_.
+2. `CLOUDINARY_API_SECRET` y `BREVO_API_KEY` viven sólo en el backend. Jamás en una
+   variable VITE_.
 3. Ninguna pantalla habla con Supabase directamente. Todo pasa por FastAPI.
    Nada de supabase-js, PostgREST, Supabase Auth ni Supabase Storage.
 4. Al registrar una foto, verificar que el `public_id` empiece con
@@ -64,3 +65,5 @@ Deploy: Render.
 - Fotos de iPhone: usar `createImageBitmap(file, {imageOrientation:'from-image'})`
   o van a aparecer acostadas en el proyector.
 - Subida: usar XMLHttpRequest, no fetch, para poder leer el progreso real.
+- Brevo: el remitente tiene que estar verificado en Senders o rechaza el envío.
+  Sin dominio propio, los primeros emails suelen caer en spam.

@@ -2,6 +2,7 @@
 
 El backend nunca ve los bytes de la foto: el navegador sube directo a Cloudinary
 con una firma que se pide acá. El CLOUDINARY_API_SECRET no sale de este proceso.
+Lo mismo para el avatar de una cuenta del panel, en `avatares/{id}`.
 
 La firma se calcula a mano con hashlib en vez de usar el SDK de Cloudinary,
 porque el SDK no está en la lista de dependencias autorizadas (regla 10) y el
@@ -11,6 +12,7 @@ algoritmo son cuatro líneas.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import time
 import zipfile
@@ -42,8 +44,14 @@ def firmar(codigo_publico: str, momento: int | None = None) -> dict:
     que el navegador manda en el FormData. Si acá se firma un parámetro de más,
     o el navegador manda uno de más, la subida falla con "Invalid Signature".
     """
+    return firmar_carpeta(carpeta_del_evento(codigo_publico), momento)
+
+
+def firmar_carpeta(folder: str, momento: int | None = None) -> dict:
+    """La firma de una subida a `folder`. La usan las fotos de los invitados
+    (`eventos/{codigo}`) y el avatar de una cuenta (`avatares/{id}`): mismo
+    algoritmo, mismos parámetros, así el navegador sube las dos igual."""
     timestamp = int(time.time()) if momento is None else momento
-    folder = carpeta_del_evento(codigo_publico)
 
     # Los parámetros van ordenados alfabéticamente y unidos por &, con el
     # api_secret pegado al final. Después, SHA-1.
@@ -110,6 +118,30 @@ def verificar_url(url: str, public_id: str) -> None:
     if not re.fullmatch(patron, url):
         # /video/upload/ y /raw/upload/ quedan afuera: sólo imágenes.
         raise ErrorApp(Codigo.ARCHIVO_INVALIDO)
+
+
+# ─────────────────────────────────────────────────────────────
+# Avatar de una cuenta del panel
+# ─────────────────────────────────────────────────────────────
+
+def carpeta_de_avatares(usuario_id: int) -> str:
+    """`avatares/{id}`. El id es un entero de la base: no se puede armar con él
+    una carpeta que salga de la de la cuenta."""
+    if not isinstance(usuario_id, int) or isinstance(usuario_id, bool) or usuario_id <= 0:
+        raise ValueError(f"id de cuenta inválido: {usuario_id!r}")
+    return f"avatares/{usuario_id}"
+
+
+_AVATAR_AJENO = "Esta imagen no es de tu cuenta"
+
+
+def verificar_avatar(public_id: str, usuario_id: int) -> None:
+    """Lo mismo que la regla 4, para el avatar: el public_id tiene que vivir en
+    `avatares/{id}/` de la cuenta que lo guarda, sin subcarpetas. Si no, una
+    cuenta podría poner de avatar una foto de un evento o el avatar de otra."""
+    prefijo = carpeta_de_avatares(usuario_id) + "/"
+    if not public_id.startswith(prefijo) or not _SUFIJO_VALIDO.fullmatch(public_id[len(prefijo):]):
+        raise ErrorApp(Codigo.PUBLIC_ID_AJENO, _AVATAR_AJENO)
 
 
 _SOLO_SEGURO = re.compile(r"^[A-Za-z0-9_\-]+$")
@@ -446,3 +478,99 @@ def borrar_archivos_del_evento(codigo_publico: str) -> int:
     del evento. Si falla cualquiera de los pedidos, levanta ErrorBorrado."""
     prefijo = prefijo_del_evento(codigo_publico)
     return sum(borrar_por_prefijo(prefijo, tipo) for tipo in TIPOS_A_BORRAR)
+
+
+# ─────────────────────────────────────────────────────────────
+# Borrado del avatar de una cuenta (lo usan Mi cuenta y eliminar una cuenta)
+# ─────────────────────────────────────────────────────────────
+
+# Hijo del de uvicorn, que en Render sale en el log a nivel INFO. Los mensajes
+# empiezan con "avatares:" porque el log de uvicorn no muestra el nombre.
+log_avatares = logging.getLogger("uvicorn.error").getChild("avatares")
+
+
+def _credenciales_cargadas() -> bool:
+    return bool(
+        config.CLOUDINARY_CLOUD_NAME and config.CLOUDINARY_API_KEY and config.CLOUDINARY_API_SECRET
+    )
+
+
+def borrar_imagen(public_id: str) -> int:
+    """Borra UNA imagen de Cloudinary por su public_id exacto (Admin API,
+    DELETE /resources/image/upload con `public_ids[]`). Devuelve 1 si la borró
+    y 0 si ya no estaba. Si Cloudinary falla, levanta ErrorBorrado."""
+    import httpx
+
+    try:
+        respuesta = httpx.delete(
+            f"{API_CLOUDINARY}/{config.CLOUDINARY_CLOUD_NAME}/resources/image/upload",
+            params={"public_ids[]": public_id, "invalidate": "true"},
+            auth=(config.CLOUDINARY_API_KEY, config.CLOUDINARY_API_SECRET),
+            timeout=30.0,
+        )
+    except httpx.HTTPError as e:
+        raise ErrorBorrado(f"sin respuesta de Cloudinary ({type(e).__name__})") from e
+    if respuesta.status_code >= 400:
+        raise ErrorBorrado(f"Cloudinary respondió {respuesta.status_code}: {respuesta.text[:300]}")
+    try:
+        borrados = (respuesta.json().get("deleted") or {}).values()
+    except ValueError as e:
+        raise ErrorBorrado("Cloudinary respondió algo que no es JSON") from e
+    return sum(1 for v in borrados if v == "deleted")
+
+
+def borrar_avatar_anterior(public_id: str | None, usuario_id: int) -> None:
+    """El avatar que una cuenta reemplazó o quitó. A mejor esfuerzo: corre en
+    segundo plano, nunca levanta, y si Cloudinary falla sólo queda en el log
+    (la imagen queda huérfana; se va con la cuenta si algún día se elimina).
+
+    Sólo borra dentro de `avatares/{id}/` de esa cuenta: se vuelve a mirar
+    aunque ya se haya verificado al guardarlo."""
+    if not public_id:
+        return
+    try:
+        verificar_avatar(public_id, usuario_id)
+    except (ErrorApp, ValueError):
+        log_avatares.error("avatares: la cuenta %s tenía un avatar fuera de su carpeta; no se borra",
+                           usuario_id)
+        return
+    if not _credenciales_cargadas():
+        log_avatares.info("avatares: sin credenciales de Cloudinary, no se borra el de la cuenta %s",
+                          usuario_id)
+        return
+    try:
+        borrar_imagen(public_id)
+    except ErrorBorrado as e:
+        log_avatares.error("avatares: no se pudo borrar el anterior de la cuenta %s (%s)",
+                           usuario_id, e)
+    except Exception:
+        log_avatares.exception("avatares: no se pudo borrar el anterior de la cuenta %s", usuario_id)
+    else:
+        log_avatares.info("avatares: borrado el anterior de la cuenta %s", usuario_id)
+
+
+def borrar_avatares_de_la_cuenta(usuario_id: int) -> None:
+    """Todo `avatares/{id}/` de una cuenta que un superadmin eliminó: el avatar
+    que tenía y cualquier imagen que subió y no llegó a guardar. Por prefijo
+    CON la barra final (sin ella, `avatares/1` alcanzaría a `avatares/12`).
+    A mejor esfuerzo: la cuenta ya se eliminó, y si Cloudinary falla sólo
+    queda en el log."""
+    try:
+        prefijo = carpeta_de_avatares(usuario_id) + "/"
+    except ValueError:
+        return
+    if not _credenciales_cargadas():
+        log_avatares.info("avatares: sin credenciales de Cloudinary, no se borran los de la cuenta %s",
+                          usuario_id)
+        return
+    try:
+        borrados = borrar_por_prefijo(prefijo, "image")
+    except ErrorBorrado as e:
+        log_avatares.error("avatares: no se pudieron borrar los de la cuenta eliminada %s (%s)",
+                           usuario_id, e)
+    except Exception:
+        log_avatares.exception("avatares: no se pudieron borrar los de la cuenta eliminada %s",
+                               usuario_id)
+    else:
+        log_avatares.info("avatares: cuenta eliminada %s, %s imágenes borradas de Cloudinary",
+                          usuario_id, borrados)

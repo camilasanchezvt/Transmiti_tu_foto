@@ -127,8 +127,8 @@ const COMPACTO =
   "whitespace-nowrap !text-base max-sm:flex-col max-sm:!gap-0.5 max-sm:!px-2 max-sm:[&>svg]:ml-0 " +
   "sm:!text-lg";
 
-/** Mismo vidrio oscuro que la barra del resto del panel (LayoutAdmin). */
-const BARRA = "border-borde bg-black/60 backdrop-blur-2xl backdrop-saturate-150";
+/** Mismo vidrio que la barra del resto del panel (LayoutAdmin). */
+const BARRA = "border-borde bg-barra backdrop-blur-2xl backdrop-saturate-150";
 
 /**
  * La bandeja. Objetivo medible: cincuenta fotos en menos de dos minutos.
@@ -609,8 +609,8 @@ export default function PaginaRevisar() {
             to={lista.a}
             aria-label={t.volverA(lista.texto)}
             className={
-              "inline-flex min-h-11 shrink-0 items-center gap-0.5 rounded-full pl-1 pr-2 text-base text-acento " +
-              "hover:brightness-110 focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
+              "inline-flex min-h-11 shrink-0 items-center gap-0.5 rounded-full pl-1 pr-2 text-base text-acento-tinta " +
+              "hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
             }
           >
             <ChevronLeftIcon aria-hidden className="h-6 w-6 shrink-0" />
@@ -642,7 +642,7 @@ export default function PaginaRevisar() {
 
       {aviso && (
         <div role="alert" className="flex shrink-0 items-center justify-between gap-3 border-b border-borde bg-rojo/15 px-4 py-1">
-          <p className="min-w-0 text-sm text-rojo sm:text-base">{aviso}</p>
+          <p className="min-w-0 text-sm text-rojo-tinta sm:text-base">{aviso}</p>
           <BotonChico className="shrink-0" icono={XMarkMini} onClick={() => setAviso(null)}>
             {comun.cerrar}
           </BotonChico>
@@ -681,7 +681,7 @@ export default function PaginaRevisar() {
               <BotonChico
                 variante="azul"
                 onClick={incorporar}
-                className="absolute left-1/2 top-3 z-10 max-w-[calc(100%-7rem)] -translate-x-1/2 shadow-lg shadow-black/40"
+                className="absolute left-1/2 top-3 z-10 max-w-[calc(100%-7rem)] -translate-x-1/2 shadow-lg shadow-sombra/40"
               >
                 {t.nuevas(enEspera.length)}
               </BotonChico>
@@ -700,7 +700,7 @@ export default function PaginaRevisar() {
             )}
 
             {actual.nombre_invitado && (
-              <p className="vidrio-oscuro pointer-events-none absolute bottom-3 left-1/2 max-w-[90%] -translate-x-1/2 truncate rounded-full px-4 py-1 text-base sm:text-lg">
+              <p className="vidrio-oscuro pointer-events-none absolute bottom-3 left-1/2 max-w-[90%] -translate-x-1/2 truncate rounded-full px-4 py-1 text-base text-luz sm:text-lg">
                 {actual.nombre_invitado}
               </p>
             )}
@@ -761,7 +761,7 @@ export default function PaginaRevisar() {
                       (marcada
                         ? "border-acento"
                         : esActual
-                          ? "border-white"
+                          ? "border-texto"
                           : "border-transparent opacity-60 hover:opacity-100")
                     }
                   >
@@ -881,7 +881,7 @@ function Tilde({ marcada, grande = false }: { marcada: boolean; grande?: boolean
   const tamano = grande ? "h-7 w-7" : "h-5 w-5";
   if (marcada) {
     return (
-      <span aria-hidden className={`block rounded-full bg-white shadow shadow-black/40 ${tamano}`}>
+      <span aria-hidden className={`block rounded-full bg-luz shadow shadow-sombra/40 ${tamano}`}>
         <CheckCircleIcon aria-hidden className="h-full w-full text-acento" />
       </span>
     );
@@ -889,7 +889,7 @@ function Tilde({ marcada, grande = false }: { marcada: boolean; grande?: boolean
   return (
     <span
       aria-hidden
-      className={`block rounded-full border-2 border-white/90 bg-black/30 shadow shadow-black/40 ${tamano}`}
+      className={`block rounded-full border-2 border-luz/90 bg-sombra/30 shadow shadow-sombra/40 ${tamano}`}
     />
   );
 }
@@ -920,7 +920,7 @@ function Vacio({
 
 function Tecla({ children }: { children: ReactNode }) {
   return (
-    <kbd className="inline-flex min-w-6 items-center justify-center rounded-md border border-borde bg-hundido px-1.5 py-0.5 font-sans text-xs text-white">
+    <kbd className="inline-flex min-w-6 items-center justify-center rounded-md border border-borde bg-hundido px-1.5 py-0.5 font-sans text-xs text-texto">
       {children}
     </kbd>
   );

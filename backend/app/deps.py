@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from .errores import Codigo, ErrorApp
 from .models import Evento, Usuario
-from .security import leer_token
+from .security import leer_sesion, milisegundos
 
 _esquema_bearer = HTTPBearer(auto_error=False)
 
@@ -35,11 +35,23 @@ def usuario_actual(
     Así una cuenta dada de baja deja de entrar en el acto, aunque tenga un token
     vigente por doce horas más, y un cambio de rol vale desde el pedido
     siguiente.
+
+    Un token emitido antes de `sesiones_desde` tampoco sirve: así se cierran
+    todas las sesiones abiertas al restablecer o cambiar la contraseña. Se
+    compara al milisegundo (ver `security.crear_token`).
     """
     if credenciales is None or not credenciales.credentials:
         raise ErrorApp(Codigo.NO_AUTORIZADO)
-    usuario = db.get(Usuario, leer_token(credenciales.credentials))
+    usuario_id, emitido_ms = leer_sesion(credenciales.credentials)
+    usuario = db.get(Usuario, usuario_id)
     if usuario is None or usuario.estado != "activa":
+        raise ErrorApp(Codigo.NO_AUTORIZADO)
+    # Alcanza con comparar el `iat` porque el login lee la cuenta con FOR SHARE
+    # hasta emitir el token (ver `routers.admin.login`): un login que leyó la
+    # contraseña vieja nunca emite un `iat` posterior al corte.
+    if usuario.sesiones_desde is not None and (
+        emitido_ms is None or emitido_ms < milisegundos(usuario.sesiones_desde)
+    ):
         raise ErrorApp(Codigo.NO_AUTORIZADO)
     return usuario
 

@@ -20,6 +20,17 @@ EstadoEvento = Literal["borrador", "activo", "cerrado"]
 EstadoFoto = Literal["pendiente", "aprobada", "rechazada"]
 RolUsuario = Literal["superadmin", "admin", "organizador"]
 EstadoCuenta = Literal["pendiente", "activa", "baja"]
+TemaPanel = Literal["oscuro", "claro", "automatico"]
+# Cómo se ve la pantalla del proyector. `desenfocado`: la misma foto, borrosa,
+# detrás; `negro`: fondo negro liso. `fundido` o `corte` entre una foto y otra.
+FondoPantalla = Literal["desenfocado", "negro"]
+TransicionPantalla = Literal["fundido", "corte"]
+
+# Los topes de los dos números de un evento, los mismos para el PATCH del
+# evento y para los predeterminados de la cuenta: menos de 3 s por foto no se
+# llega a ver en un proyector, y más de 50 fotos por invitado deja de ser un límite.
+SegundosPorFoto = Annotated[int, Field(ge=3, le=30)]
+MaxFotosPorDispositivo = Annotated[int, Field(ge=1, le=50)]
 
 # El nombre de una cuenta, sin espacios de sobra. Se recorta ANTES de medir,
 # así "   " cuenta como vacío y no como un nombre de tres caracteres.
@@ -139,9 +150,17 @@ class PantallaEvento(BaseModel):
 
 
 class PantallaConfig(BaseModel):
+    """`segundos_por_foto` y el estilo (`fondo`, `transicion`, `mostrar_nombre`,
+    `mostrar_qr`) salen de la fila del evento: la pantalla los toma en su
+    próxima pasada de polling, sin recargar. Los otros dos son del servidor."""
+
     segundos_por_foto: int
     intervalo_polling_ms: int
     maximo_buffer: int
+    fondo: FondoPantalla
+    transicion: TransicionPantalla
+    mostrar_nombre: bool
+    mostrar_qr: bool
 
 
 class Pantalla(BaseModel):
@@ -215,15 +234,22 @@ class CambioEstadoEvento(BaseModel):
 
     Los topes cuidan la pantalla y el cupo: menos de 3 s por foto no se llega a
     ver en un proyector, y más de 50 fotos por invitado deja de ser un límite.
+
+    Los cuatro `pantalla_*` son el estilo de la pantalla del proyector; le
+    llegan en su próxima pasada de polling, sin recargarla.
     """
 
     estado: EstadoEvento | None = None
-    segundos_por_foto: int | None = Field(default=None, ge=3, le=30)
-    max_fotos_por_dispositivo: int | None = Field(default=None, ge=1, le=50)
+    segundos_por_foto: SegundosPorFoto | None = None
+    max_fotos_por_dispositivo: MaxFotosPorDispositivo | None = None
+    pantalla_fondo: FondoPantalla | None = None
+    pantalla_transicion: TransicionPantalla | None = None
+    pantalla_mostrar_nombre: bool | None = None
+    pantalla_mostrar_qr: bool | None = None
 
     @model_validator(mode="after")
     def _algo_para_cambiar(self) -> "CambioEstadoEvento":
-        if self.estado is None and self.segundos_por_foto is None and self.max_fotos_por_dispositivo is None:
+        if all(getattr(self, campo) is None for campo in type(self).model_fields):
             raise ValueError("Mandá al menos un campo para cambiar")
         return self
 
@@ -243,6 +269,10 @@ class EventoAdmin(BaseModel):
     no se borraron ni se están borrando (desde el día del borrado ya es null,
     aunque la limpieza todavía no haya pasado); si no, null. Es lo que el panel ofrece descargar sin tener
     que pedir el estado del video a cada evento de la lista.
+
+    Los cuatro `pantalla_*` son el estilo de la pantalla del proyector. Al
+    crear el evento se copian de los predeterminados del dueño, igual que
+    `segundos_por_foto` y `max_fotos_por_dispositivo`.
     """
 
     id: int
@@ -261,6 +291,10 @@ class EventoAdmin(BaseModel):
     fotos_se_borran_el: date
     fotos_borradas_en: datetime | None
     video_url_listo: str | None
+    pantalla_fondo: FondoPantalla
+    pantalla_transicion: TransicionPantalla
+    pantalla_mostrar_nombre: bool
+    pantalla_mostrar_qr: bool
 
 
 class VideoEvento(BaseModel):
@@ -352,13 +386,139 @@ class RegistroRecibido(BaseModel):
     estado: Literal["pendiente"]
 
 
+class EstiloPantalla(BaseModel):
+    """El estilo de la pantalla del proyector, dentro de los predeterminados."""
+
+    fondo: FondoPantalla
+    transicion: TransicionPantalla
+    mostrar_nombre: bool
+    mostrar_qr: bool
+
+
+class Predeterminados(BaseModel):
+    """Lo que se copia a cada evento nuevo de la cuenta. Cambiarlos no toca los
+    eventos que ya existen."""
+
+    segundos_por_foto: int
+    max_fotos_por_dispositivo: int
+    pantalla: EstiloPantalla
+
+
 class UsuarioYo(BaseModel):
-    """GET /api/admin/yo: quién tiene la sesión abierta."""
+    """GET /api/admin/yo: quién tiene la sesión abierta, con lo de Mi cuenta.
+
+    Lo devuelven también PATCH /api/admin/yo y los tres del avatar.
+    """
+
+    model_config = ConfigDict(json_schema_extra={"examples": [{
+        "id": 3,
+        "email": "bruno@transmitifoto.test",
+        "nombre": "Bruno",
+        "rol": "organizador",
+        "avatar_url": None,
+        "tema": "automatico",
+        "predeterminados": {
+            "segundos_por_foto": 7,
+            "max_fotos_por_dispositivo": 10,
+            "pantalla": {"fondo": "desenfocado", "transicion": "fundido",
+                         "mostrar_nombre": True, "mostrar_qr": True},
+        },
+    }]})
 
     id: int
     email: str
     nombre: str
     rol: RolUsuario
+    avatar_url: str | None
+    tema: TemaPanel
+    predeterminados: Predeterminados
+
+
+# Un cambio parcial: los campos que faltan (o vienen en null) no se tocan. Con
+# `extra="forbid"`, un campo que no existe es 422 y no se ignora en silencio:
+# así un `rol` o un `email` en el cuerpo no parecen haber cambiado algo.
+_PARCIAL = ConfigDict(extra="forbid")
+
+
+class CambioEstiloPantalla(BaseModel):
+    model_config = _PARCIAL
+
+    fondo: FondoPantalla | None = None
+    transicion: TransicionPantalla | None = None
+    mostrar_nombre: bool | None = None
+    mostrar_qr: bool | None = None
+
+
+class CambioPredeterminados(BaseModel):
+    model_config = _PARCIAL
+
+    segundos_por_foto: SegundosPorFoto | None = None
+    max_fotos_por_dispositivo: MaxFotosPorDispositivo | None = None
+    pantalla: CambioEstiloPantalla | None = None
+
+
+class CambioYo(BaseModel):
+    """Cuerpo de PATCH /api/admin/yo. Todo parcial, y al menos un valor en total.
+
+    No cambia el email, el rol ni el estado: esos campos no existen acá y
+    mandarlos es 422.
+    """
+
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [
+        {"tema": "claro"},
+        {"predeterminados": {"segundos_por_foto": 9, "pantalla": {"fondo": "negro"}}},
+    ]})
+
+    nombre: NombreCuenta | None = None
+    tema: TemaPanel | None = None
+    predeterminados: CambioPredeterminados | None = None
+
+    def valores(self) -> dict[str, object]:
+        """Los valores mandados, aplanados: {"tema": ..., "pantalla.fondo": ...}."""
+        planos: dict[str, object] = {}
+        if self.nombre is not None:
+            planos["nombre"] = self.nombre
+        if self.tema is not None:
+            planos["tema"] = self.tema
+        pred = self.predeterminados
+        if pred is not None:
+            for campo in ("segundos_por_foto", "max_fotos_por_dispositivo"):
+                if getattr(pred, campo) is not None:
+                    planos[campo] = getattr(pred, campo)
+            if pred.pantalla is not None:
+                for campo in ("fondo", "transicion", "mostrar_nombre", "mostrar_qr"):
+                    if getattr(pred.pantalla, campo) is not None:
+                        planos[f"pantalla.{campo}"] = getattr(pred.pantalla, campo)
+        return planos
+
+    @model_validator(mode="after")
+    def _algo_para_cambiar(self) -> "CambioYo":
+        if not self.valores():
+            raise ValueError("Mandá al menos un campo para cambiar")
+        return self
+
+
+class PedidoCambioContrasena(BaseModel):
+    """Cuerpo de POST /api/admin/yo/contrasena. `nueva`, igual que en el registro."""
+
+    actual: str = Field(min_length=1, max_length=1024)
+    nueva: str = Field(min_length=10, max_length=128)
+
+
+class AvatarNuevo(BaseModel):
+    """Cuerpo de PUT /api/admin/yo/avatar: la imagen ya subida a Cloudinary.
+
+    El `public_id` tiene que estar en `avatares/{id de la cuenta}/`, sin
+    subcarpetas (si no, PUBLIC_ID_AJENO), y la `url` tiene que ser exactamente
+    la de esa imagen en la cuenta de Cloudinary de la app (si no,
+    ARCHIVO_INVALIDO). Mismos largos que una foto de invitado.
+    """
+
+    public_id: str = Field(max_length=200, examples=["avatares/3/k3j2h1"])
+    url: str = Field(
+        max_length=500,
+        examples=["https://res.cloudinary.com/demo/image/upload/v1/avatares/3/k3j2h1.jpg"],
+    )
 
 
 class Cuenta(BaseModel):
@@ -376,6 +536,7 @@ class Cuenta(BaseModel):
     creado_en: datetime
     eventos: int
     ultimo_evento: date | None
+    avatar_url: str | None
 
 
 class CambioCuenta(BaseModel):
@@ -414,6 +575,39 @@ class PedidoEliminarCuenta(BaseModel):
     """
 
     confirmar_email: str = Field(max_length=254, examples=["bruno@transmitifoto.test"])
+
+
+class PedidoRecuperar(BaseModel):
+    """Cuerpo de POST /api/cuentas/recuperar. Público, sin token."""
+
+    email: EmailCuenta = Field(examples=["bruno@transmitifoto.test"])
+
+
+class RecuperacionPedida(BaseModel):
+    """Respuesta 200 de POST /api/cuentas/recuperar. Es SIEMPRE la misma, exista
+    o no la cuenta: una respuesta distinta serviría para averiguar qué emails
+    están registrados."""
+
+    enviado: Literal[True]
+
+
+class PedidoRestablecer(BaseModel):
+    """Cuerpo de POST /api/cuentas/restablecer. Público, sin token de sesión.
+
+    `token` es el del link del email (lo que sigue a `#token=`). Sin largo
+    mínimo a propósito: cualquier token que no sirve, también uno vacío,
+    responde "El link ya no sirve. Pedí uno nuevo."
+    """
+
+    token: str = Field(max_length=200)
+    password: str = Field(min_length=10, max_length=128)
+
+
+class ContrasenaRestablecida(BaseModel):
+    """Respuesta 200 de POST /api/cuentas/restablecer. Después hay que entrar
+    de nuevo: todas las sesiones de la cuenta se cerraron."""
+
+    restablecida: Literal[True]
 
 
 class CuentaEliminada(BaseModel):

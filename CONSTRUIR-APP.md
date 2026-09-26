@@ -40,6 +40,7 @@ Tres interfaces, un backend, varios eventos simultáneos sin que se mezclen entr
 | Imágenes | **Cloudinary**, subida firmada desde el navegador | El backend sólo firma |
 | Frontend | React 18 · Vite · TypeScript · Tailwind CSS · React Router | Una sola SPA con tres zonas |
 | Íconos | `@heroicons/react` | Autorizado por pedido de la usuaria (26-sep-2026). Outline 24 para la mayoría, solid para acciones principales, mini 20 para chips y botones chicos. El ícono acompaña al texto, no lo reemplaza |
+| Email | **Brevo**, por su API HTTP, desde el backend con `httpx` | Sólo para *olvidé mi contraseña* (26-sep-2026). Sin SDK ni SMTP. Opcional: sin configurar, la app anda igual y no manda emails |
 | Despliegue | **Render**: un web service para la API, un static site para el frontend | |
 | Autenticación | JWT propio (`pyjwt`) + `passlib[bcrypt]` | Sólo para el administrador |
 
@@ -47,7 +48,7 @@ Tres interfaces, un backend, varios eventos simultáneos sin que se mezclen entr
 
 - **Supabase se usa únicamente como PostgreSQL.** Nada de `supabase-js`, PostgREST, Supabase Auth ni Supabase Storage. Si una pantalla consulta Supabase directamente, se saltea el backend y con él las reglas de moderación y el aislamiento entre eventos.
 - **La conexión a Supabase desde Render usa la cadena del pooler en modo sesión.** La conexión directa resuelve por IPv6 y falla desde Render con un error de red que parece de credenciales.
-- **El `CLOUDINARY_API_SECRET` nunca sale del backend.** No se importa, no se referencia, no aparece en ninguna variable `VITE_*`.
+- **El `CLOUDINARY_API_SECRET` nunca sale del backend.** No se importa, no se referencia, no aparece en ninguna variable `VITE_*`. Lo mismo `BREVO_API_KEY`: el email lo manda el backend, nunca el navegador.
 - **No se agregan librerías fuera de las listadas** sin que esté justificado en el prompt de la fase. `@heroicons/react` está en la tabla porque la usuaria lo pidió: no es un precedente para sumar otras.
 
 ---
@@ -143,7 +144,7 @@ transmiti-tu-foto/
 
 ## 4. Modelo de datos
 
-Tres tablas. El archivo `db/schema.sql` se crea exactamente así.
+Cuatro tablas. El archivo `db/schema.sql` se crea exactamente así.
 
 ```sql
 CREATE TABLE usuarios (
@@ -155,7 +156,27 @@ CREATE TABLE usuarios (
                 CHECK (rol IN ('superadmin','admin','organizador')),
   estado        text NOT NULL DEFAULT 'pendiente'
                 CHECK (estado IN ('pendiente','activa','baja')),
-  creado_en     timestamptz NOT NULL DEFAULT now()
+  creado_en     timestamptz NOT NULL DEFAULT now(),
+  -- Un token de sesión emitido antes de este momento ya no sirve. Se pone al
+  -- restablecer la contraseña por email y al cambiarla desde Mi cuenta.
+  sesiones_desde   timestamptz,
+  -- La foto de la cuenta, en Cloudinary dentro de avatares/{id}/.
+  avatar_public_id text,
+  avatar_url       text,
+  -- El tema del panel. 'automatico' sigue al del sistema operativo.
+  tema             text NOT NULL DEFAULT 'automatico'
+                   CHECK (tema IN ('oscuro','claro','automatico')),
+  -- Predeterminados: se copian a cada evento nuevo de la cuenta.
+  pred_segundos_por_foto         int NOT NULL DEFAULT 7
+                                 CHECK (pred_segundos_por_foto BETWEEN 3 AND 30),
+  pred_max_fotos_por_dispositivo int NOT NULL DEFAULT 10
+                                 CHECK (pred_max_fotos_por_dispositivo BETWEEN 1 AND 50),
+  pred_pantalla_fondo      text NOT NULL DEFAULT 'desenfocado'
+                           CHECK (pred_pantalla_fondo IN ('desenfocado','negro')),
+  pred_pantalla_transicion text NOT NULL DEFAULT 'fundido'
+                           CHECK (pred_pantalla_transicion IN ('fundido','corte')),
+  pred_pantalla_nombre     boolean NOT NULL DEFAULT true,
+  pred_pantalla_qr         boolean NOT NULL DEFAULT true
 );
 
 CREATE TABLE eventos (
@@ -179,7 +200,15 @@ CREATE TABLE eventos (
   video_pedido_en timestamptz,
   -- A los 30 días de fecha_evento se borran de Cloudinary todas las fotos y
   -- todos los videos del evento. Las filas quedan; esto marca cuándo se borraron.
-  fotos_borradas_en timestamptz
+  fotos_borradas_en timestamptz,
+  -- Cómo se ve la pantalla del proyector. Al crear el evento se copian de los
+  -- predeterminados del dueño (usuarios.pred_*).
+  pantalla_fondo          text NOT NULL DEFAULT 'desenfocado'
+                          CHECK (pantalla_fondo IN ('desenfocado','negro')),
+  pantalla_transicion     text NOT NULL DEFAULT 'fundido'
+                          CHECK (pantalla_transicion IN ('fundido','corte')),
+  pantalla_mostrar_nombre boolean NOT NULL DEFAULT true,
+  pantalla_mostrar_qr     boolean NOT NULL DEFAULT true
 );
 
 CREATE TABLE fotos (
@@ -198,6 +227,23 @@ CREATE TABLE fotos (
   moderada_en      timestamptz,
   moderada_por     bigint REFERENCES usuarios(id)
 );
+
+-- Los pedidos de "olvidé mi contraseña". Se guarda el HASH del token (sha256),
+-- nunca el token: viaja sólo en el email. Sirve una vez y durante una hora; un
+-- pedido nuevo anula los anteriores vivos. Nada se borra en el uso normal: se
+-- van sólo con la cuenta, si un superadmin la elimina.
+CREATE TABLE recuperaciones_contrasena (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  usuario_id  bigint NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  token_hash  text NOT NULL UNIQUE,
+  creado_en   timestamptz NOT NULL DEFAULT now(),
+  vence_en    timestamptz NOT NULL,
+  usado_en    timestamptz,
+  anulado_en  timestamptz
+);
+
+-- Para anular los pedidos vivos de una cuenta y para el ON DELETE CASCADE.
+CREATE INDEX idx_recuperaciones_usuario ON recuperaciones_contrasena (usuario_id);
 
 -- El índice del polling de la pantalla. Sin este, a las 200 fotos se arrastra.
 CREATE INDEX idx_fotos_pantalla ON fotos (evento_id, estado, id);
@@ -230,6 +276,8 @@ Los dos se generan con `secrets.token_urlsafe`, nunca a partir del id ni de la f
 - `usuarios` empezó llamándose `administradores`; la migración `0003_usuarios_y_roles` la renombró, le agregó `rol` y `estado`, y pasó `eventos.admin_id` a `usuario_id`. Las cuentas que ya existían quedaron `admin` y `activa`.
 - La migración `0004_superadmin` sólo amplía el `CHECK` de `rol` con `superadmin`. No promueve a nadie: el superadmin se nombra a mano (ver *Nombrar un superadmin* en la sección 5). Su downgrade vuelve a `admin` a los superadmin antes de restaurar el `CHECK` viejo.
 - La migración `0005_fotos_borradas` agrega `eventos.fotos_borradas_en` (`timestamptz`, nula). No borra nada: de Cloudinary se encarga la limpieza en segundo plano (*Borrado automático a los 30 días*, en la sección 5). Su downgrade sólo saca la columna; lo que ya se borró en Cloudinary no vuelve.
+- La migración `0006_cuenta_y_recuperacion` agrega a `usuarios` `sesiones_desde`, el avatar, `tema` y los `pred_*`; a `eventos`, los cuatro `pantalla_*`; y crea `recuperaciones_contrasena`. Cada columna NOT NULL entra con su DEFAULT, que completa las filas existentes: las cuentas quedan con 7 s, 10 fotos y tema automático, y los eventos con la pantalla como se veía (desenfocado, fundido, con nombre y con QR). `sesiones_desde` nace NULL: nadie queda afuera. Los CHECK llevan el nombre que Postgres les pone en línea (`{tabla}_{columna}_check`), así una base migrada es igual a una creada con `schema.sql` (lo prueba `tests/test_esquema.py`, que arma las dos y las compara con los modelos). Su downgrade pierde avatares, temas, predeterminados, estilos y el historial de recuperaciones, y las sesiones cerradas al cambiar una contraseña vuelven a servir hasta que vencen.
+- **Otra salvedad a *nada se borra*:** al eliminar una cuenta, sus filas de `recuperaciones_contrasena` se van con ella (`ON DELETE CASCADE`). Son datos de la persona, como su email.
 
 ---
 
@@ -293,13 +341,34 @@ body → { "email": "bruno@ejemplo.com", "nombre": "Bruno", "password": "diez-o-
 ```
 Responde **siempre** lo mismo, también si el email ya existe; en ese caso no crea ni cambia nada. Así no se puede averiguar qué emails están registrados. La cuenta nace `organizador` y `pendiente`, y no puede entrar hasta que un admin la habilite. El email se guarda en minúsculas y tiene que tener formato de email; nombre de 1 a 80 caracteres; contraseña de 10 a 128. Límite: 5 pedidos por hora por IP.
 
+**`POST /api/cuentas/recuperar`** — sin auth. *Olvidé mi contraseña.*
+```json
+body → { "email": "bruno@ejemplo.com" }
+200  → { "enviado": true }
+422  → DATOS_INVALIDOS (no tiene forma de email) · 429 → DEMASIADOS_PEDIDOS
+```
+Responde **siempre** `200 {"enviado": true}`, con el mismo cuerpo y las mismas cabeceras, exista o no la cuenta. Sólo si existe y está `activa`: genera un token al azar (`secrets.token_urlsafe(32)`), guarda su **hash** sha256 en `recuperaciones_contrasena` con `vence_en` = ahora + 1 hora, anula los pedidos anteriores de esa cuenta que seguían vivos y manda el email. A una cuenta `pendiente` o `baja` no le llega nada. El email sale **en segundo plano, después de la respuesta** (BackgroundTasks): esperar a Brevo haría tardar más justo a las cuentas que existen. Límites: 5 por hora por IP y 3 por hora por email (normalizado), cuenten o no una cuenta existente. El email se compara sin mayúsculas.
+
+El link del email es `{URL_PANEL}/admin/restablecer#token=...`: el token va en el **fragmento**, que el navegador no manda en ningún pedido, así que no queda en ningún log de servidor. `URL_PANEL` sale de la configuración (sección 9), nunca del pedido: con la cabecera `Host`, cualquiera podría hacer que el link con el token apunte a su sitio. El email, en rioplatense, corto, en HTML simple y en texto: *Pediste cambiar tu contraseña de Transmití tu foto. Tocá el botón para elegir una nueva. El link sirve una vez y vence en una hora. Si no fuiste vos, ignorá este email.* El nombre de la persona va escapado en el HTML. Sale por **Brevo**, con su API HTTP (`POST https://api.brevo.com/v3/smtp/email`, cabecera `api-key`, responde 201), con httpx: sin SDK ni SMTP. Sin `BREVO_API_KEY` o sin `EMAIL_REMITENTE`, responde igual pero no manda nada, y deja una vez en el log `email: SIN CONFIGURAR, …` (en producción, al arrancar). Si Brevo falla, la respuesta tampoco cambia: queda `email: Brevo respondió …` en el log, sin el email de la persona ni el link.
+
+**`POST /api/cuentas/restablecer`** — sin auth. *Elegir la contraseña nueva con el link.*
+```json
+body → { "token": "el-del-link", "password": "diez-o-mas" }
+200  → { "restablecida": true }
+422  → DATOS_INVALIDOS · 429 → DEMASIADOS_PEDIDOS
+```
+Un token inexistente, vacío, vencido, usado, anulado o de una cuenta que ya no está `activa` → 422 `DATOS_INVALIDOS` **"El link ya no sirve. Pedí uno nuevo."**, siempre el mismo mensaje. Contraseña de 10 a 128 (si no, 422 genérico, y el link sigue sirviendo). Si sirve: cambia la contraseña, marca el pedido como usado y **cierra todas las sesiones abiertas de la cuenta** (`sesiones_desde`, abajo): después hay que entrar con la contraseña nueva. El pedido se toma con `FOR UPDATE`: dos canjes a la vez del mismo link se hacen de a uno y el segundo ya lo encuentra usado. Límite: 10 por hora por IP.
+
 ### Pantalla — la usa la notebook del proyector
 
 **`GET /api/pantalla/{token_pantalla}`**
 ```json
 200 → { "evento": { "nombre": "...", "codigo_publico": "ab12cd34", "estado": "activo" },
-        "config": { "segundos_por_foto": 7, "intervalo_polling_ms": 6000, "maximo_buffer": 200 } }
+        "config": { "segundos_por_foto": 7, "intervalo_polling_ms": 6000, "maximo_buffer": 200,
+                    "fondo": "desenfocado", "transicion": "fundido",
+                    "mostrar_nombre": true, "mostrar_qr": true } }
 ```
+`segundos_por_foto` y el estilo (`fondo`: `desenfocado` | `negro`; `transicion`: `fundido` | `corte`; `mostrar_nombre`, `mostrar_qr`) salen de la fila del evento: la pantalla los toma en su próxima pasada de polling, sin recargar.
 
 **`GET /api/pantalla/{token_pantalla}/fotos?desde=0&limite=40`**
 ```json
@@ -327,10 +396,15 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 | Método y ruta | Body | Respuesta |
 |---|---|---|
 | `POST /api/admin/login` | `{email, password}` — sin auth | `{token, expira_en}`. Email inexistente, contraseña incorrecta o cuenta `pendiente` (aun con la contraseña correcta) → 401 `NO_AUTORIZADO`, con el mismo mensaje para los tres: el registro deja elegir la contraseña de un email nuevo, y un mensaje propio para la pendiente delataría qué emails ya existían. Contraseña correcta de una cuenta `baja` → 403 `NO_AUTORIZADO`. 429 → `DEMASIADOS_PEDIDOS`: 10 intentos cada 10 minutos por IP y 20 por email, contados antes de buscar la cuenta |
-| `GET /api/admin/yo` | — | `{id, email, nombre, rol}` de la sesión. `rol`: `superadmin`, `admin` u `organizador` |
-| `GET /api/admin/eventos` | query opcional: `alcance=vigentes\|historial`, `organizador={id}` | lista con `{id, nombre, fecha_evento, estado, codigo_publico, token_pantalla, segundos_por_foto, max_fotos_por_dispositivo, pendientes, aprobadas, rechazadas, organizador_id, organizador_nombre, fotos_se_borran_el, fotos_borradas_en, video_url_listo}`. `fotos_se_borran_el` es `fecha_evento` + 30 días (`YYYY-MM-DD`); `fotos_borradas_en`, cuándo se borraron de Cloudinary las fotos y los videos, o `null`; `video_url_listo`, la URL del último video si está `listo` y todavía no es el día del borrado (ni se borraron), si no `null`. Crear y cambiar un evento responden con esta misma forma. Un admin o un superadmin ve todos; un organizador, sólo los suyos. Regla de medianoche: `vigentes` son los `activo` de cualquier fecha más los `borrador` con fecha de hoy en adelante, del más próximo al más lejano (un abierto de ayer queda primero); `historial`, los `cerrado` de cualquier fecha más los `borrador` de fecha pasada, del más reciente al más viejo. "Hoy" es el de Argentina (UTC−3 fijo). Sin `alcance`, todos por fecha descendente. `organizador` sólo lo respetan un admin y un superadmin |
-| `POST /api/admin/eventos` | `{nombre, fecha_evento, organizador_id?}` | el evento creado, con sus dos claves y su dueño. Sin `organizador_id`, el dueño es quien lo crea. Un admin puede crearlo para otra cuenta activa (si no existe o no está activa → `DATOS_INVALIDOS`); un organizador que manda otro id → 403 `NO_AUTORIZADO`. Una `fecha_evento` de hace 30 días o más ("hoy" de Argentina) → 422 `DATOS_INVALIDOS` "Esa fecha ya pasó hace 30 días o más. Revisá el año": nacería con las fotos vencidas, la próxima limpieza lo cerraría sin dejar reabrirlo y la fecha no se cambia después. Casi siempre es el año mal puesto. De hace menos, sí: sirve para juntar las fotos de una fiesta que ya pasó |
-| `PATCH /api/admin/eventos/{id}` | `{estado?, segundos_por_foto?, max_fotos_por_dispositivo?}`, al menos uno. Segundos entre 3 y 30; fotos por invitado entre 1 y 50 | el evento actualizado. Reabrir (`activo` o `borrador`) un evento con las fotos ya borradas, o desde el día del borrado aunque la limpieza no haya pasado → 409 `DATOS_INVALIDOS`; cerrarlo y cambiar lo demás, sí |
+| `GET /api/admin/yo` | — | `{id, email, nombre, rol, avatar_url, tema, predeterminados: {segundos_por_foto, max_fotos_por_dispositivo, pantalla: {fondo, transicion, mostrar_nombre, mostrar_qr}}}` de la sesión. `rol`: `superadmin`, `admin` u `organizador`. `tema`: `oscuro`, `claro` o `automatico`. Ver *Mi cuenta*, abajo |
+| `PATCH /api/admin/yo` | `{nombre?, tema?, predeterminados?: {segundos_por_foto?, max_fotos_por_dispositivo?, pantalla?: {fondo?, transicion?, mostrar_nombre?, mostrar_qr?}}}`: todo parcial, al menos un valor en total | lo mismo que `GET /api/admin/yo`. Idempotente. Mismos topes que el PATCH de un evento (3 a 30 s, 1 a 50 fotos). No cambia email, rol ni estado: un campo que no existe (`email`, `rol`, `estado`, `avatar_url`…) → 422 `DATOS_INVALIDOS`, no se ignora. Cualquier cuenta activa, para sí misma |
+| `POST /api/admin/yo/contrasena` | `{actual, nueva}`. `nueva` de 10 a 128 | 200 `{token, expira_en}`: una **sesión nueva**, que el panel guarda en lugar de la anterior. Cierra todas las sesiones de la cuenta (`sesiones_desde`) menos ésta, y anula los links de recuperación vivos. `actual` incorrecta → 422 `DATOS_INVALIDOS` "La contraseña actual no es correcta". 429 → `DEMASIADOS_PEDIDOS`: 5 por hora por cuenta, contados antes de bcrypt, para que una sesión robada no sirva para adivinar la contraseña |
+| `POST /api/admin/yo/avatar/firma` | — | `{cloud_name, api_key, timestamp, signature, folder}`: la misma firma que la de las fotos (sólo `folder` y `timestamp`), con `folder` = `avatares/{id de la cuenta}`. 429 → `DEMASIADOS_PEDIDOS`: 20 por hora por cuenta |
+| `PUT /api/admin/yo/avatar` | `{public_id, url}` de la imagen ya subida | lo mismo que `GET /api/admin/yo`. `public_id` fuera de `avatares/{id}/`, con subcarpetas o con otra cosa que letras, números, `_` o `-` después → 403 `PUBLIC_ID_AJENO` "Esta imagen no es de tu cuenta". `url` que no es exactamente la de esa imagen en la cuenta de Cloudinary de la app (misma regla que una foto) → 400 `ARCHIVO_INVALIDO`. Si reemplaza a otro, el anterior se borra de Cloudinary en segundo plano, a mejor esfuerzo |
+| `POST /api/admin/yo/avatar/quitar` | — | lo mismo que `GET /api/admin/yo`, con `avatar_url: null`. La imagen se borra de Cloudinary a mejor esfuerzo. Idempotente |
+| `GET /api/admin/eventos` | query opcional: `alcance=vigentes\|historial`, `organizador={id}` | lista con `{id, nombre, fecha_evento, estado, codigo_publico, token_pantalla, segundos_por_foto, max_fotos_por_dispositivo, pendientes, aprobadas, rechazadas, organizador_id, organizador_nombre, fotos_se_borran_el, fotos_borradas_en, video_url_listo, pantalla_fondo, pantalla_transicion, pantalla_mostrar_nombre, pantalla_mostrar_qr}`. Los cuatro `pantalla_*` son el estilo de la pantalla del proyector (ver `GET /api/pantalla/{token}`). `fotos_se_borran_el` es `fecha_evento` + 30 días (`YYYY-MM-DD`); `fotos_borradas_en`, cuándo se borraron de Cloudinary las fotos y los videos, o `null`; `video_url_listo`, la URL del último video si está `listo` y todavía no es el día del borrado (ni se borraron), si no `null`. Crear y cambiar un evento responden con esta misma forma. Un admin o un superadmin ve todos; un organizador, sólo los suyos. Regla de medianoche: `vigentes` son los `activo` de cualquier fecha más los `borrador` con fecha de hoy en adelante, del más próximo al más lejano (un abierto de ayer queda primero); `historial`, los `cerrado` de cualquier fecha más los `borrador` de fecha pasada, del más reciente al más viejo. "Hoy" es el de Argentina (UTC−3 fijo). Sin `alcance`, todos por fecha descendente. `organizador` sólo lo respetan un admin y un superadmin |
+| `POST /api/admin/eventos` | `{nombre, fecha_evento, organizador_id?}` | el evento creado, con sus dos claves y su dueño. Nace con los **predeterminados del dueño** (Mi cuenta): `segundos_por_foto`, `max_fotos_por_dispositivo` y los cuatro `pantalla_*`; si un admin lo crea para otra cuenta, son los de esa cuenta, no los del admin. Sin `organizador_id`, el dueño es quien lo crea. Un admin puede crearlo para otra cuenta activa (si no existe o no está activa → `DATOS_INVALIDOS`); un organizador que manda otro id → 403 `NO_AUTORIZADO`. Una `fecha_evento` de hace 30 días o más ("hoy" de Argentina) → 422 `DATOS_INVALIDOS` "Esa fecha ya pasó hace 30 días o más. Revisá el año": nacería con las fotos vencidas, la próxima limpieza lo cerraría sin dejar reabrirlo y la fecha no se cambia después. Casi siempre es el año mal puesto. De hace menos, sí: sirve para juntar las fotos de una fiesta que ya pasó |
+| `PATCH /api/admin/eventos/{id}` | `{estado?, segundos_por_foto?, max_fotos_por_dispositivo?, pantalla_fondo?, pantalla_transicion?, pantalla_mostrar_nombre?, pantalla_mostrar_qr?}`, al menos uno. Segundos entre 3 y 30; fotos por invitado entre 1 y 50; `pantalla_fondo`: `desenfocado` o `negro`; `pantalla_transicion`: `fundido` o `corte` | el evento actualizado. Los segundos y el estilo le llegan a la pantalla en su próxima pasada de polling, sin recargarla. Reabrir (`activo` o `borrador`) un evento con las fotos ya borradas, o desde el día del borrado aunque la limpieza no haya pasado → 409 `DATOS_INVALIDOS`; cerrarlo y cambiar lo demás, sí |
 | `GET /api/admin/eventos/{id}/fotos` | query: `estado`, `desde`, `limite` | `{fotos: [...], ultimo_id}` |
 | `GET /api/admin/eventos/{id}/resumen` | — | `{pendientes, aprobadas, rechazadas}` |
 | `PATCH /api/admin/fotos/{id}` | `{estado}` | `{id, estado}` |
@@ -339,7 +413,7 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 | `GET /api/admin/eventos/{id}/descarga` | query: `incluir=aprobadas\|todas` | archivo ZIP. Desde el día del borrado (se hayan borrado ya o no) → 410 `DATOS_INVALIDOS`. Si alguna foto no se pudo bajar de Cloudinary, el ZIP lleva adentro `000 - FALTAN FOTOS.txt` con cuántas y cuáles: la respuesta ya salió con 200 (es streaming) y es la única forma de que un ZIP incompleto no parezca completo |
 | `POST /api/admin/eventos/{id}/video` | — | 202 `{estado, url, fotos, pedido_en}`. Pide a Cloudinary (`create_slideshow`) un video 1280×720 con las aprobadas, 3 s cada una, hasta 150 repartidas en la noche. Si ya hay uno en proceso, devuelve ese. Sin aprobadas → `DATOS_INVALIDOS`. Desde el día del borrado → 410 `DATOS_INVALIDOS` |
 | `GET /api/admin/eventos/{id}/video` | — | `{estado: ninguno\|procesando\|listo\|fallo, url, fotos, pedido_en}`. Mientras está `procesando` le pregunta a Cloudinary; a los 30 min sin terminar pasa a `fallo`. Desde el día del borrado → 410 `DATOS_INVALIDOS` |
-| `GET /api/admin/cuentas` | — admin o superadmin — | lista con `{id, email, nombre, rol, estado, creado_en, eventos, ultimo_evento}`, superadmins incluidos: `eventos` es cuántos tiene y `ultimo_evento` la fecha del más reciente, o `null`. Pendientes primero (las más nuevas arriba), después activas y al final las de baja, cada grupo por nombre |
+| `GET /api/admin/cuentas` | — admin o superadmin — | lista con `{id, email, nombre, rol, estado, creado_en, eventos, ultimo_evento, avatar_url}`, superadmins incluidos (`avatar_url`, la foto de la cuenta o `null`): `eventos` es cuántos tiene y `ultimo_evento` la fecha del más reciente, o `null`. Pendientes primero (las más nuevas arriba), después activas y al final las de baja, cada grupo por nombre |
 | `PATCH /api/admin/cuentas/{id}` | admin o superadmin. `{estado?: activa\|baja, rol?: admin\|organizador, nombre?}`, al menos uno | la cuenta, con la forma del listado. Idempotente. `pendiente` no es un valor aceptado. Quién puede cambiar qué cuenta, en la matriz de abajo. Id inexistente → `DATOS_INVALIDOS` 404 |
 | `DELETE /api/admin/cuentas/{id}` | sólo superadmin. `{confirmar_email}`: el email de la cuenta, escrito a mano. Va en el cuerpo, nunca en la URL | 200 `{eventos_transferidos: N}`. Elimina la cuenta para siempre y sus eventos pasan a quien la elimina: la única excepción a *nada se borra* (*Eliminar una cuenta para siempre*, abajo). Admin u organizador → 403 `NO_AUTORIZADO` "No tenés permiso para esto". Una cuenta superadmin → 403 `NO_AUTORIZADO` "A una cuenta superadmin no se la elimina desde el panel". La propia → 422 `DATOS_INVALIDOS` "No podés eliminar tu propia cuenta". `confirmar_email` distinto del email de la cuenta (sin distinguir mayúsculas y sin espacios alrededor) → 422 `DATOS_INVALIDOS` "El email no coincide con el de la cuenta". Id inexistente → 404 `DATOS_INVALIDOS` "No encontramos esa cuenta". Cuerpo mal formado → 422 `DATOS_INVALIDOS`. En cada rechazo la base queda como estaba |
 | `GET /api/salud` | — sin auth — | `{estado, base}` |
@@ -358,6 +432,7 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 - **Roles.** Tres: `superadmin`, `admin` y `organizador`. `superadmin` es la dueña de la app: puede todo lo que puede un admin y además gestiona a los admins. `admin` ve y gestiona todos los eventos, ve todas las cuentas y gestiona las de organizador. `organizador` ve sólo sus eventos. Para todo lo que no son cuentas, un superadmin es un admin más. Un evento o una foto de otra cuenta responden 404 (`EVENTO_NO_ENCONTRADO`, `FOTO_NO_ENCONTRADA`), igual que si no existieran: un 403 confirmaría que existen. Un organizador en un endpoint sólo de admin recibe 403 `NO_AUTORIZADO`.
 - **Cuentas.** Se crean solas desde el registro, como `organizador` y `pendiente`. Ningún admin crea cuentas con contraseña ni conoce contraseñas ajenas. Dar de baja reemplaza a borrar: la cuenta no entra, pero sus eventos y fotos quedan, los admins los siguen viendo y se puede reactivar. La única excepción es *Eliminar una cuenta para siempre* (abajo), sólo para superadmins.
 - La sesión se valida contra la base en cada pedido: una baja corta en el acto los tokens ya emitidos, y un cambio de rol vale desde el pedido siguiente.
+- **Sesiones que se cierran.** Un token cuyo `iat` es anterior a `usuarios.sesiones_desde` → 401 `NO_AUTORIZADO`. `sesiones_desde` se pone al restablecer la contraseña por email y al cambiarla desde Mi cuenta: así se cierran todas las sesiones abiertas de la cuenta, en todos los dispositivos. Se compara **al milisegundo**: el `iat` de los tokens lleva milisegundos (un NumericDate de JWT puede tener decimales). Al segundo no alcanzaba: una sesión abierta en el mismo segundo del cambio seguía valiendo. La sesión nueva que devuelve el cambio de contraseña se emite exactamente en `sesiones_desde`, y ésa sí sirve.
 - **Nadie cambia su propio rol ni su propio estado.** Así el sistema nunca se queda sin admins y nadie se bloquea solo. El nombre propio sí.
 - **El rol `superadmin` no se asigna desde el panel**, ni siquiera un superadmin a otra cuenta: se nombra a mano en la base (abajo).
 
@@ -376,7 +451,7 @@ Los admins también pueden crear admins: fue una elección de la usuaria. Deshac
 
 **Eliminar una cuenta para siempre** (`DELETE /api/admin/cuentas/{id}`). Decisión de la usuaria del 26-sep-2026. Es la **única excepción a la regla 7** (*nada se borra*) y es sólo para superadmins. Para sacar a alguien, lo normal sigue siendo darlo de baja.
 
-- **Qué se borra:** la fila de `usuarios` y nada más: el nombre, el email y la contraseña.
+- **Qué se borra:** la fila de `usuarios` y nada más: el nombre, el email y la contraseña. Con ella se van sus pedidos de recuperación de contraseña (`ON DELETE CASCADE`) y, si tenía avatar, su carpeta `avatares/{id}/` de Cloudinary, a mejor esfuerzo (ver *Mi cuenta*).
 - **Qué pasa con lo suyo:** sus eventos, con sus fotos y sus videos, pasan a la cuenta del superadmin que la elimina (`eventos.usuario_id` = el id del superadmin). En `fotos.moderada_por`, lo que moderó esa cuenta queda en `NULL`; el estado y `moderada_en` de esas fotos no cambian. Las claves públicas no cambian: los invitados y la pantalla no se enteran.
 - **Una sola transacción:** mover los eventos, soltar lo moderado y borrar la fila pasan juntos o no pasa nada. La fila se toma con `FOR UPDATE` antes de mirar nada: un evento nuevo para esa cuenta, o una foto que modera en ese momento, espera a que termine, y no queda una referencia colgada que haga fallar el borrado.
 - **Confirmación del lado del servidor:** el cuerpo trae `confirmar_email`, que tiene que ser el email de la cuenta, sin distinguir mayúsculas y sin espacios alrededor. El panel también lo pide, pero el servidor no confía en eso. Va en el cuerpo y no en la URL para que el email no quede en ningún log de acceso.
@@ -402,6 +477,14 @@ WHERE email = 'duena@ejemplo.com';
 ```
 
 El email de arriba es de ejemplo. El real no se escribe en el código ni en la documentación: el repositorio es público. Si la cuenta todavía no existe, `backend/crear_admin.py` imprime el `INSERT` de una cuenta nueva y pregunta el rol (`superadmin` por defecto, o `admin`). Para sacarle el rol, lo mismo con `rol = 'admin'`.
+
+**Mi cuenta** (`/api/admin/yo`). Decisión de la usuaria del 26-sep-2026. Cada cuenta activa, de cualquier rol, cambia lo suyo y nada de otra:
+
+- **Nombre y tema del panel** (`oscuro`, `claro` o `automatico`, que sigue al del sistema). El panel aplica el tema que trae `GET /api/admin/yo`.
+- **Predeterminados** de sus eventos nuevos: segundos por foto, fotos por invitado y el estilo de la pantalla (fondo, transición, si muestra el nombre y el QR). Se copian al crear cada evento del que la cuenta es dueña, también si se lo crea un admin; cambiarlos no toca los eventos que ya existen.
+- **Contraseña**, con la actual: una sesión abierta en una compu ajena no alcanza. Cierra las demás sesiones y devuelve una nueva.
+- **Avatar**, que el navegador sube directo a Cloudinary con una firma para `avatares/{id}` (igual que las fotos de los invitados) y después guarda con `PUT`. La verificación de carpeta es la regla 4 aplicada al avatar: sin ella, una cuenta podría mostrar de avatar una foto de un evento o cualquier imagen de internet. Al eliminar una cuenta que tenía avatar, se borra de Cloudinary todo `avatares/{id}/` (con la barra final), en segundo plano y a mejor esfuerzo: si falla, queda en el log con `avatares:` y la cuenta igual está eliminada.
+- **Nunca** el email, el rol ni el estado: no son campos de `PATCH /api/admin/yo` (mandarlos es 422).
 
 **Borrado automático a los 30 días.** Decisión de la usuaria: Cloudinary no es un archivo permanente. Las fotos y el video se descargan desde Ajustes antes de esa fecha.
 
@@ -553,6 +636,7 @@ Si el polling falla:
 
 - **Nunca deformar una foto.** Entra completa y centrada (`object-fit: contain`); el espacio que sobra se llena con la misma imagen ampliada y desenfocada de fondo.
 - Transición: fundido de unos 700 ms. Tiempo por foto: el `segundos_por_foto` que manda el servidor.
+- **Estilo por evento** (Ajustes → *Pantalla*; los predeterminados de cada evento nuevo salen de *Mi cuenta*): fondo *Desenfocado* (lo de arriba) o *Negro* liso; cambio de foto *Fundido* o *Corte* seco; el nombre de quien la mandó, sí o no; el QR chico de la esquina, sí o no (el QR grande de la espera se ve siempre: sin fotos es lo único que hay). Llega en la `config` de cada pasada del polling y se aplica sin recargar. Los DEFAULT son lo que la pantalla mostraba antes: desenfocado, fundido, con nombre y con QR.
 - Fondo oscuro y texto blanco grande: un proyector en un salón con luz baja pierde mucho brillo.
 - **Tamaño del QR:** un QR se escanea cómodo hasta unas diez veces su propio lado. Con la persona más lejana a ocho metros, el QR proyectado tiene que medir cerca de ochenta centímetros — más de un cuarto del ancho de una proyección de tres metros. Mucho más grande de lo que parece necesario en la notebook.
 - Pantalla completa real (Fullscreen API), sin scroll, cursor oculto, `navigator.wakeLock` para que la máquina no se suspenda.
@@ -563,7 +647,17 @@ Si el polling falla:
 
 ## 8. Especificación del panel de administración
 
-Rutas `/admin/login`, `/admin/registro`, `/admin` (eventos vigentes), `/admin/historial`, `/admin/cuentas` (sólo admin y superadmin), `/admin/eventos/:id/revisar` y `/admin/eventos/:id/ajustes`. Las viejas `/moderar` y `/cierre` redirigen a `/revisar` y `/ajustes`.
+Rutas `/admin/login`, `/admin/registro`, `/admin/olvide` (olvidé mi contraseña), `/admin/restablecer` (la del link del email, con `#token=…`), `/admin` (eventos vigentes), `/admin/historial`, `/admin/cuentas` (sólo admin y superadmin), `/admin/cuenta` (Mi cuenta), `/admin/eventos/:id/revisar` y `/admin/eventos/:id/ajustes`. Las viejas `/moderar` y `/cierre` redirigen a `/revisar` y `/ajustes`.
+
+**Olvidé mi contraseña y Mi cuenta** (contrato en la sección 5). `/admin/olvide` pide el email y, pase lo que pase, dice lo mismo (el backend responde igual exista o no la cuenta). `/admin/restablecer` lee el token del fragmento de la URL, pide la contraseña nueva y, si el link ya no sirve, lo dice y ofrece pedir otro. `/admin/cuenta` cambia nombre, tema, predeterminados, contraseña y avatar; al cambiar la contraseña guarda el token nuevo que devuelve el backend.
+
+**Temas.** El panel tiene tema oscuro (el de siempre) y claro estilo iOS, con los colores como variables CSS; `automatico` sigue a `prefers-color-scheme` y reacciona si cambia. Se aplica al cargar desde una copia local (sin parpadeo) y se confirma con el `tema` de `GET /api/admin/yo`. La app del invitado (`/e/…`) y la pantalla (`/p/…`) son siempre oscuras, sin importar la preferencia. Cómo está armado:
+
+- Cada color es una variable `R G B` en `src/index.css`, una paleta por `data-tema` en `<html>`, y `tailwind.config.js` las nombra (`fondo`, `panel`, `hoja`, `borde`, `hundido`, `texto`, `tenue`, `acento`, `rojo`, `verde`, `naranja`…), así funcionan los modificadores de opacidad (`bg-acento/15`). Los vidrios (`panel`, `hoja`, `borde`, `hundido`, `tenue`…) traen su propia opacidad por tema en una variable `-alfa`: el panel es blanco al 8 % en oscuro y al 72 % en claro. En el código no hay colores fijos (`text-white`, `bg-black/…`): todo va por token.
+- **Tintas.** Un texto chico de color usa la variante `-tinta` (`text-acento-tinta`, `text-verde-tinta`…). En oscuro es el mismo color; en claro, uno más oscuro, porque #34C759 o #FF9500 sobre blanco no se leen. Los rellenos (`bg-acento`, un chip `bg-verde/15`) usan el color de sistema; su texto, la tinta.
+- **Los dos fijos.** `luz` (blanco) y `sombra` (negro) no cambian con el tema: texto sobre un relleno de color o encima de una foto, el fondo del QR, y los oscurecidos sobre una foto.
+- `hoja` es el vidrio de los diálogos: en claro, casi opaco, para que lo de atrás no se transparente entre las líneas del mensaje; en oscuro, igual que `panel`.
+- **Siempre oscuros.** Las rutas del invitado y de la pantalla cuelgan de `comp/SiempreOscuro`, que fija el oscuro mientras están montadas; el script de `index.html` hace lo mismo antes del primer cuadro para `/e/…` y `/p…`. Una ruta nueva de esas zonas va adentro de las dos listas.
 
 `/admin/historial` acepta `?organizador={id}` para quedarse con los eventos de una cuenta (es el *Ver historial* de Cuentas); sólo cuenta para un admin o un superadmin. Desde una lista, Ajustes y Revisar fotos vuelven a esa misma lista con su filtro.
 
@@ -632,11 +726,25 @@ ENTORNO=desarrollo                 # desarrollo | produccion
 # corre sólo con ENTORNO=produccion (y nunca sin CLOUDINARY_API_SECRET).
 # LIMPIEZA_ACTIVA=
 
+# Opcionales: el email de "olvidé mi contraseña" (Brevo, por su API HTTP).
+# Sin BREVO_API_KEY o sin EMAIL_REMITENTE la app arranca igual y la
+# recuperación responde lo mismo, pero no manda nada (queda un aviso en el log).
+# BREVO_API_KEY NUNCA llega al navegador; EMAIL_REMITENTE tiene que estar
+# verificado en Brevo (Senders).
+BREVO_API_KEY=
+EMAIL_REMITENTE=
+EMAIL_REMITENTE_NOMBRE="Transmití tu foto"
+# Dónde vive el panel, para el link del email. Sin definir: el primer origen
+# https de CORS_ORIGINS.
+# URL_PANEL=https://transmitifoto.onrender.com
+
 # ── Frontend (Vite) ────────────────────────────────────────
 VITE_API_URL=http://localhost:8000
 ```
 
-Sólo lo que empieza con `VITE_` llega al navegador. Que no aparezca ahí ninguna clave secreta.
+Sólo lo que empieza con `VITE_` llega al navegador. Que no aparezca ahí ninguna clave secreta: ni `CLOUDINARY_API_SECRET` ni `BREVO_API_KEY`.
+
+`render.yaml` no las declara: `BREVO_API_KEY`, `EMAIL_REMITENTE` (y, si hace falta, `EMAIL_REMITENTE_NOMBRE` y `URL_PANEL`) se cargan a mano en Render, en *transmitifoto-api → Environment*. La guía para configurar Brevo está en el README.
 
 ---
 

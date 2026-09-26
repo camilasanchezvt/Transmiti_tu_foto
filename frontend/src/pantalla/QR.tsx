@@ -33,7 +33,7 @@ export default function QR({ url, lado, className = "" }: Props) {
   return (
     <canvas
       ref={lienzo}
-      className={`rounded-2xl bg-white ${className}`}
+      className={`rounded-2xl bg-luz ${className}`}
       // Un <canvas> sin rol lo saltean los lectores de pantalla aunque tenga
       // etiqueta: con role="img" se anuncia como imagen.
       role="img"

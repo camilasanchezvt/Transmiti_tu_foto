@@ -60,9 +60,28 @@ export interface FotoRegistrada {
 
 // ── Pantalla ─────────────────────────────────────────────────
 
+/** Cómo se ve la pantalla del evento. Lo elige quien organiza en Ajustes;
+ *  un evento nuevo copia los predeterminados de su dueño (Mi cuenta). */
+export type FondoPantalla = "desenfocado" | "negro";
+export type TransicionPantalla = "fundido" | "corte";
+
+export interface EstiloPantalla {
+  /** Lo que llena el espacio que la foto no ocupa: la misma foto ampliada y
+   *  desenfocada, o negro. */
+  fondo: FondoPantalla;
+  /** Entre una foto y la siguiente: fundido o corte seco. */
+  transicion: TransicionPantalla;
+  /** El nombre de quien la mandó, abajo, si lo escribió. */
+  mostrar_nombre: boolean;
+  /** El QR para mandar fotos, en una esquina. */
+  mostrar_qr: boolean;
+}
+
 export interface Pantalla {
   evento: { nombre: string; codigo_publico: string; estado: EstadoEvento };
-  config: {
+  /** La pantalla lo vuelve a pedir en cada pasada de polling: un cambio de
+   *  estilo en Ajustes se ve sin recargar. */
+  config: EstiloPantalla & {
     segundos_por_foto: number;
     intervalo_polling_ms: number;
     maximo_buffer: number;
@@ -99,6 +118,10 @@ export interface CambioEvento {
   estado?: EstadoEvento;
   segundos_por_foto?: number;
   max_fotos_por_dispositivo?: number;
+  pantalla_fondo?: FondoPantalla;
+  pantalla_transicion?: TransicionPantalla;
+  pantalla_mostrar_nombre?: boolean;
+  pantalla_mostrar_qr?: boolean;
 }
 
 export interface EventoNuevo {
@@ -136,6 +159,12 @@ export interface EventoAdmin {
   /** La URL del último video si está listo y las fotos no se borraron; si no,
    *  null. Es lo que usa el botón "Descargar video". */
   video_url_listo: string | null;
+  /** El estilo de la pantalla (ver EstiloPantalla). Al crear el evento se
+   *  copian de los predeterminados del dueño. */
+  pantalla_fondo: FondoPantalla;
+  pantalla_transicion: TransicionPantalla;
+  pantalla_mostrar_nombre: boolean;
+  pantalla_mostrar_qr: boolean;
 }
 
 /** Query de GET /api/admin/eventos. Sin alcance vienen todos. Regla de
@@ -160,12 +189,59 @@ export interface FiltroEventos {
 export type RolUsuario = "superadmin" | "admin" | "organizador";
 export type EstadoCuenta = "pendiente" | "activa" | "baja";
 
-/** GET /api/admin/yo */
+/** El tema del panel que eligió la cuenta. Automático sigue al del sistema.
+ *  El invitado y la pantalla son siempre oscuros, sin importar esto. */
+export type Tema = "oscuro" | "claro" | "automatico";
+
+/** Con qué arranca cada evento nuevo de la cuenta. Después, cada evento se
+ *  cambia en sus Ajustes sin tocar esto. */
+export interface Predeterminados {
+  /** 3 a 30. */
+  segundos_por_foto: number;
+  /** 1 a 50. */
+  max_fotos_por_dispositivo: number;
+  pantalla: EstiloPantalla;
+}
+
+/** GET /api/admin/yo, y la respuesta de todo lo de /api/admin/yo que cambia
+ *  algo (PATCH, avatar). */
 export interface UsuarioYo {
   id: number;
   email: string;
   nombre: string;
   rol: RolUsuario;
+  /** La foto de la cuenta (Cloudinary), o null. */
+  avatar_url: string | null;
+  tema: Tema;
+  predeterminados: Predeterminados;
+}
+
+/** Cuerpo de PATCH /api/admin/yo: al menos uno. Los predeterminados pueden ir
+ *  por partes (sólo lo que cambió). No cambia email, rol ni estado. */
+export interface CambioYo {
+  nombre?: string;
+  tema?: Tema;
+  predeterminados?: Partial<Omit<Predeterminados, "pantalla">> & {
+    pantalla?: Partial<EstiloPantalla>;
+  };
+}
+
+/** Cuerpo de POST /api/admin/yo/contrasena. `nueva`: 10 a 128 caracteres.
+ *  Responde una Sesion nueva: las demás sesiones de la cuenta dejan de servir,
+ *  la de quien la cambió sigue con el token nuevo. */
+export interface PedidoCambioContrasena {
+  actual: string;
+  nueva: string;
+}
+
+/** Cuerpo de PUT /api/admin/yo/avatar, después de subir la imagen a
+ *  Cloudinary con la firma de POST /api/admin/yo/avatar/firma. El backend
+ *  verifica que `public_id` esté en avatares/{id de la cuenta}/ y que `url` sea
+ *  de la cuenta de Cloudinary de la app (si no, PUBLIC_ID_AJENO o
+ *  ARCHIVO_INVALIDO). */
+export interface AvatarNuevo {
+  public_id: string;
+  url: string;
 }
 
 /** GET /api/admin/cuentas (sólo admin) y respuesta de PATCH /api/admin/cuentas/{id} */
@@ -180,6 +256,8 @@ export interface Cuenta {
   eventos: number;
   /** fecha_evento más reciente, o null si no tiene ninguno. */
   ultimo_evento: string | null;
+  /** La foto de la cuenta, o null. */
+  avatar_url: string | null;
 }
 
 /** Cuerpo de PATCH /api/admin/cuentas/{id}: al menos uno. 'pendiente' no se
@@ -218,6 +296,30 @@ export interface PedidoRegistro {
  *  qué emails están registrados. */
 export interface RespuestaRegistro {
   estado: "pendiente";
+}
+
+/** POST /api/cuentas/recuperar (público). Siempre la misma respuesta, exista
+ *  o no la cuenta: no se puede averiguar qué emails están registrados. Si
+ *  existe y está activa, le llega un email con un link que vence en una hora. */
+export interface PedidoRecuperar {
+  email: string;
+}
+
+export interface RespuestaRecuperar {
+  enviado: true;
+}
+
+/** POST /api/cuentas/restablecer (público). `token` sale del link del email
+ *  (/admin/restablecer#token=…). Si no sirve (vencido, usado, de una cuenta
+ *  que ya no está activa) responde 422 con un solo mensaje para todos los
+ *  casos. Si sirve, cierra todas las sesiones abiertas de esa cuenta. */
+export interface PedidoRestablecer {
+  token: string;
+  password: string;
+}
+
+export interface RespuestaRestablecer {
+  restablecida: true;
 }
 
 /** GET y POST /api/admin/eventos/{id}/video */

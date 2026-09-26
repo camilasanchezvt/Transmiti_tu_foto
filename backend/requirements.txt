@@ -12,7 +12,7 @@ pydantic-settings>=2.6,<3      # app/config.py lee el entorno con esto
 pyjwt>=2.9,<3
 passlib[bcrypt]>=1.7.4,<2
 bcrypt>=4.0,<5                 # passlib 1.7.4 lee bcrypt.__about__, que bcrypt 5 ya no tiene
+httpx>=0.27,<1                 # Cloudinary (video y borrados), Brevo (email) y el TestClient
 
 # Pruebas
 pytest>=8.3,<9
-httpx>=0.27,<1                 # lo necesita el TestClient de FastAPI

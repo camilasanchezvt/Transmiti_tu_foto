@@ -19,7 +19,7 @@ import { claseIconoChip } from "./icono";
 const BASE =
   "inline-flex h-fit shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-medium";
 
-const GRIS = "bg-white/10 text-tenue";
+const GRIS = "bg-hundido text-tenue";
 
 /** Mini (20/solid) a 16 px, corrido medio punto a la izquierda: sin eso el
  *  chip se ve con más aire del lado del ícono que del lado del texto. */
@@ -31,9 +31,9 @@ function Punto({ clase }: { clase: string }) {
 
 const EVENTO: Record<EstadoEvento, string> = {
   borrador: GRIS,
-  activo: "bg-verde/15 text-verde",
+  activo: "bg-verde/15 text-verde-tinta",
   // Gris azulado: ya pasó, pero no es un error.
-  cerrado: "bg-slate-400/15 text-slate-300",
+  cerrado: "bg-gris/15 text-gris",
 };
 
 /** borrador → "Sin publicar" · activo → "Abierto" (con punto verde) · cerrado → "Terminado" */
@@ -49,8 +49,8 @@ export function ChipEstado({ estado }: { estado: EstadoEvento }) {
 export default ChipEstado;
 
 const CUENTA: Record<EstadoCuenta, string> = {
-  pendiente: "bg-naranja/15 text-naranja",
-  activa: "bg-verde/15 text-verde",
+  pendiente: "bg-naranja/15 text-naranja-tinta",
+  activa: "bg-verde/15 text-verde-tinta",
   baja: GRIS,
 };
 
@@ -69,8 +69,8 @@ export function ChipCuenta({ estado }: { estado: EstadoCuenta }) {
 const ROL: Record<RolUsuario, string> = {
   // Relleno sólido: es la única cuenta así, y se distingue de un admin sin
   // sumar un color.
-  superadmin: "bg-acento text-white",
-  admin: "bg-acento/15 text-acento",
+  superadmin: "bg-acento text-luz",
+  admin: "bg-acento/15 text-acento-tinta",
   organizador: GRIS,
 };
 

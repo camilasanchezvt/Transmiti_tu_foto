@@ -111,7 +111,9 @@ def db(motor_prueba):
 @pytest.fixture()
 def limpiar(db):
     """Deja sólo la cuenta de Ana, admin: cada prueba empieza sin eventos ni fotos."""
-    db.execute(text("TRUNCATE fotos, eventos, usuarios RESTART IDENTITY CASCADE"))
+    db.execute(text(
+        "TRUNCATE recuperaciones_contrasena, fotos, eventos, usuarios RESTART IDENTITY CASCADE"
+    ))
     db.add(
         Usuario(
             email=EMAIL_ADMIN,

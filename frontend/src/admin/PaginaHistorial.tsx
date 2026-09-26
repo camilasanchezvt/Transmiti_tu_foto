@@ -238,13 +238,12 @@ function FiltroOrganizador({
           value={elegido === undefined ? "" : String(elegido)}
           onChange={(e) => onElegir(e.target.value)}
           // appearance-none y una flecha propia: la nativa de Windows es un
-          // cuadrado gris que no pega con el vidrio. Las opciones con fondo
-          // sólido: algunos navegadores pintan la lista con el fondo del
-          // select, y el hundido es translúcido.
+          // cuadrado gris que no pega con el vidrio. Las opciones llevan el
+          // fondo sólido del tema (index.css): algunos navegadores pintan la
+          // lista con el fondo del select, y el hundido es translúcido.
           className={
             "h-12 w-full cursor-pointer appearance-none text-ellipsis rounded-xl border border-borde bg-hundido pl-3 pr-10 " +
-            "text-base text-white outline-none [color-scheme:dark] focus:border-acento " +
-            "[&_option]:bg-black [&_option]:text-white"
+            "text-base text-texto outline-none focus:border-acento"
           }
         >
           <option value="">{t.filtro.todos}</option>
@@ -400,8 +399,8 @@ function Total({ n, etiqueta, destacado = false }: { n: number; etiqueta: string
   // pantalla: "aprobadas, 12"); flex-col-reverse los da vuelta a la vista.
   return (
     <div className="flex min-w-0 flex-col-reverse">
-      <dt className={`truncate text-xs ${destacado ? "text-naranja" : "text-tenue"}`}>{etiqueta}</dt>
-      <dd className={`text-2xl font-semibold tabular-nums ${destacado ? "text-naranja" : ""}`}>{n}</dd>
+      <dt className={`truncate text-xs ${destacado ? "text-naranja-tinta" : "text-tenue"}`}>{etiqueta}</dt>
+      <dd className={`text-2xl font-semibold tabular-nums ${destacado ? "text-naranja-tinta" : ""}`}>{n}</dd>
     </div>
   );
 }
@@ -437,7 +436,7 @@ function LineaBorrado({
 }) {
   // items-start y el ícono bajado 2 px (el renglón mide 19, el ícono 16): si el
   // texto ocupa dos renglones, el ícono queda a la altura del primero.
-  const color = aviso ? "font-medium text-naranja" : "text-tenue";
+  const color = aviso ? "font-medium text-naranja-tinta" : "text-tenue";
   return (
     <p className={`mt-3 flex items-start gap-1.5 text-sm leading-snug ${color}`}>
       <IconoLinea aria-hidden className={`mt-0.5 ${claseIconoChip}`} />

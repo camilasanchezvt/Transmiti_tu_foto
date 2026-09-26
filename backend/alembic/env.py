@@ -19,7 +19,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", obtener_config().DATABASE_URL)
+# set_main_option pasa por la interpolación de configparser, que toma el "%"
+# como especial. Una contraseña con @ : / # ? o % va codificada en la URL
+# (%40, %23...) y, sin duplicar el "%", alembic corta con un ValueError que
+# además imprime la URL entera, contraseña incluida. Como Render corre
+# `alembic upgrade head` antes de uvicorn, la API no llegaría a levantar.
+# get_main_option y get_section devuelven la URL original, sin los "%%".
+config.set_main_option("sqlalchemy.url", obtener_config().DATABASE_URL.replace("%", "%%"))
 
 target_metadata = Base.metadata
 

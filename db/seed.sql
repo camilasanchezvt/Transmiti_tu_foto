@@ -34,7 +34,7 @@
 -- la imagen: si alguna se filtra a la pantalla del evento activo, se ve al
 -- instante y sin mirar la base.
 
-TRUNCATE fotos, eventos, usuarios RESTART IDENTITY CASCADE;
+TRUNCATE recuperaciones_contrasena, fotos, eventos, usuarios RESTART IDENTITY CASCADE;
 
 INSERT INTO usuarios (email, nombre, password_hash, rol, estado, creado_en) VALUES
   ('ana@transmitifoto.test', 'Ana Moderadora',

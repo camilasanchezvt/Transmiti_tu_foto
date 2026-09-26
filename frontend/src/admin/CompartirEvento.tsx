@@ -133,7 +133,7 @@ function QrDescargable({ url, nombre, grande }: { url: string; nombre: string; g
         ref={lienzo}
         role="img"
         aria-label={t.qr(nombre)}
-        className={`rounded-2xl bg-white ${grande ? "h-[min(240px,65vw)] w-[min(240px,65vw)]" : "h-40 w-40"}`}
+        className={`rounded-2xl bg-luz ${grande ? "h-[min(240px,65vw)] w-[min(240px,65vw)]" : "h-40 w-40"}`}
       />
       <BotonChico onClick={descargar} icono={ArrowDownTrayIcon}>
         {t.descargarQR}
@@ -195,7 +195,7 @@ function ConectarPantalla({ evento }: { evento: EventoAdmin }) {
         {t.pantalla.titulo}
       </h3>
       {sinPublicar ? (
-        <p className="mt-0.5 flex items-start gap-2 text-sm leading-5 text-naranja">
+        <p className="mt-0.5 flex items-start gap-2 text-sm leading-5 text-naranja-tinta">
           <ExclamationTriangleIcon aria-hidden className="h-5 w-5 shrink-0" />
           {t.pantalla.sinPublicar}
         </p>
@@ -263,7 +263,7 @@ function Opcion({
           <span
             className={
               "flex h-10 w-10 shrink-0 items-center justify-center rounded-xl " +
-              (apagada ? "bg-hundido text-tenue" : "bg-acento/15 text-acento")
+              (apagada ? "bg-hundido text-tenue" : "bg-acento/15 text-acento-tinta")
             }
           >
             <IconoOpcion aria-hidden className="h-6 w-6" />
@@ -350,7 +350,7 @@ function OpcionTele({ evento, sinPublicar }: { evento: EventoAdmin; sinPublicar:
         <div className="mt-3 rounded-xl bg-hundido p-4 text-center">
           <p className="text-sm leading-snug">
             {t.pantalla.tele.abri}{" "}
-            <strong className="break-all font-semibold text-white">{window.location.host}/p</strong>{" "}
+            <strong className="break-all font-semibold text-texto">{window.location.host}/p</strong>{" "}
             {t.pantalla.tele.carga}
           </p>
           <p
@@ -364,7 +364,7 @@ function OpcionTele({ evento, sinPublicar }: { evento: EventoAdmin; sinPublicar:
       )}
       {vencido && !codigo && <p className="mt-2 text-sm text-tenue">{t.pantalla.tele.vencido}</p>}
       {falla && (
-        <p role="alert" className="mt-2 text-sm text-rojo">
+        <p role="alert" className="mt-2 text-sm text-rojo-tinta">
           {falla}
         </p>
       )}
