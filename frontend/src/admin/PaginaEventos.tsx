@@ -175,7 +175,7 @@ function ClavesDelEvento({ evento, destacado = false }: { evento: EventoAdmin; d
       {destacado && <QrDescargable url={urlInvitado} nombre={evento.nombre} />}
       <div className="flex min-w-0 flex-1 flex-col gap-3">
         <Copiable etiqueta="Link para los invitados (el del QR)" valor={urlInvitado} />
-        <Copiable etiqueta="Link de la pantalla" valor={urlPantalla} />
+        <Copiable etiqueta="Link de la pantalla" valor={urlPantalla} abrible />
         <VincularPantalla evento={evento} />
       </div>
       {!destacado && <QrDescargable url={urlInvitado} nombre={evento.nombre} chico />}
@@ -281,7 +281,7 @@ function VincularPantalla({ evento }: { evento: EventoAdmin }) {
   );
 }
 
-function Copiable({ etiqueta, valor }: { etiqueta: string; valor: string }) {
+function Copiable({ etiqueta, valor, abrible = false }: { etiqueta: string; valor: string; abrible?: boolean }) {
   const [copiado, setCopiado] = useState(false);
 
   async function copiar() {
@@ -307,6 +307,16 @@ function Copiable({ etiqueta, valor }: { etiqueta: string; valor: string }) {
         >
           {copiado ? "Copiado" : "Copiar"}
         </button>
+        {abrible && (
+          // Sin tele a mano, cualquier ventana hace de pantalla. Con nombre fijo,
+          // un segundo clic reusa la misma ventana en vez de abrir otra.
+          <button
+            onClick={() => window.open(valor, `pantalla-${valor}`, "popup,width=1280,height=720")}
+            className="shrink-0 rounded-lg border border-borde px-3 py-1 text-xs hover:border-acento"
+          >
+            Abrir en ventana
+          </button>
+        )}
       </div>
     </div>
   );
