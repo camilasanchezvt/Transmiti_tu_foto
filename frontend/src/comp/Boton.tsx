@@ -9,9 +9,11 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const ESTILOS: Record<Variante, string> = {
-  principal: "bg-acento text-black hover:brightness-110 active:brightness-95",
-  secundario: "bg-panel text-white border border-borde hover:border-acento",
-  peligro: "bg-panel text-red-300 border border-red-900 hover:border-red-500",
+  // Como los botones de iOS: el principal es una cápsula de color sólido; el
+  // resto, vidrio con el texto teñido.
+  principal: "bg-acento text-white hover:brightness-110 active:scale-[0.98] active:brightness-90",
+  secundario: "bg-panel text-white border border-borde hover:bg-white/15 active:scale-[0.98]",
+  peligro: "bg-panel text-rojo border border-borde hover:bg-white/15 active:scale-[0.98]",
 };
 
 /**
@@ -32,7 +34,7 @@ export default function Boton({
       {...resto}
       disabled={disabled || cargando}
       className={
-        "min-h-boton w-full rounded-2xl px-6 text-lg font-semibold " +
+        "min-h-boton w-full rounded-full px-6 text-lg font-semibold " +
         "transition disabled:cursor-not-allowed disabled:opacity-50 " +
         `focus:outline-none focus-visible:ring-2 focus-visible:ring-acento ${ESTILOS[variante]} ${className}`
       }

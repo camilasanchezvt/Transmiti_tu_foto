@@ -60,8 +60,8 @@ export default function PaginaEventos() {
   if (!eventos) return <Cargando texto="Cargando eventos…" />;
 
   return (
-    <main className="mx-auto max-w-3xl p-6">
-      <header className="mb-8 flex items-center justify-between">
+    <main className="mx-auto max-w-3xl px-4 py-6 sm:p-6">
+      <header className="mb-6 flex items-center justify-between sm:mb-8">
         <h1 className="text-2xl font-semibold">Eventos</h1>
         <button
           onClick={() => {
@@ -74,8 +74,11 @@ export default function PaginaEventos() {
         </button>
       </header>
 
-      <form onSubmit={crear} className="mb-10 flex flex-wrap items-end gap-3 rounded-2xl border border-borde bg-panel p-4">
-        <label className="flex-1 text-sm text-tenue">
+      <form
+        onSubmit={crear}
+        className="mb-8 grid gap-3 rounded-3xl border border-borde bg-panel p-4 sm:mb-10 sm:grid-cols-[1fr_auto_10rem] sm:items-end"
+      >
+        <label className="min-w-0 text-sm text-tenue">
           Nombre
           <input
             value={nombre}
@@ -83,7 +86,7 @@ export default function PaginaEventos() {
             required
             maxLength={120}
             placeholder="Casamiento Ana y Juan"
-            className="mt-1 h-12 w-full rounded-xl border border-borde bg-fondo px-3 text-base text-white outline-none focus:border-acento"
+            className="mt-1 h-12 w-full rounded-xl border border-borde bg-hundido px-3 text-base text-white outline-none focus:border-acento"
           />
         </label>
         <label className="text-sm text-tenue">
@@ -93,12 +96,10 @@ export default function PaginaEventos() {
             value={fecha}
             onChange={(e) => setFecha(e.target.value)}
             required
-            className="mt-1 h-12 rounded-xl border border-borde bg-fondo px-3 text-base text-white outline-none focus:border-acento"
+            className="mt-1 h-12 w-full rounded-xl border border-borde bg-hundido px-3 text-base text-white outline-none focus:border-acento"
           />
         </label>
-        <div className="w-40">
-          <Boton type="submit" cargando={creando}>Crear</Boton>
-        </div>
+        <Boton type="submit" cargando={creando}>Crear</Boton>
       </form>
 
       {error ? <div className="mb-6"><MensajeError error={error} /></div> : null}
@@ -114,30 +115,30 @@ export default function PaginaEventos() {
           {eventos.map((e) => (
             <li
               key={e.id}
-              className="rounded-2xl border border-borde bg-panel p-4"
+              className="rounded-3xl border border-borde bg-panel p-4"
               style={{ borderLeft: `6px solid ${colorDelEvento(e.codigo_publico)}` }}
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold">{e.nombre}</h2>
+                <div className="min-w-0">
+                  <h2 className="break-words text-lg font-semibold">{e.nombre}</h2>
                   <p className="text-sm text-tenue">
                     {e.fecha_evento} · {e.estado}
                   </p>
                 </div>
-                <div className="flex items-center gap-4">
-                  <p className="text-sm">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-4">
+                  <p className="mr-auto text-sm sm:mr-0">
                     <strong className="text-xl text-acento">{e.pendientes}</strong>
                     <span className="text-tenue">{e.pendientes === 1 ? " pendiente" : " pendientes"}</span>
                   </p>
                   <Link
                     to={`/admin/eventos/${e.id}/moderar`}
-                    className="rounded-xl border border-borde px-4 py-2 text-sm hover:border-acento"
+                    className="rounded-full border border-borde bg-panel px-4 py-2 text-sm hover:bg-white/15"
                   >
                     Moderar
                   </Link>
                   <Link
                     to={`/admin/eventos/${e.id}/cierre`}
-                    className="rounded-xl border border-borde px-4 py-2 text-sm hover:border-acento"
+                    className="rounded-full border border-borde bg-panel px-4 py-2 text-sm hover:bg-white/15"
                   >
                     Cierre
                   </Link>
@@ -171,9 +172,9 @@ function ClavesDelEvento({ evento, destacado = false }: { evento: EventoAdmin; d
   const urlPantalla = `${window.location.origin}/p/${evento.token_pantalla}`;
 
   return (
-    <div className={`mt-4 flex flex-wrap items-center gap-6 ${destacado ? "" : "text-sm"}`}>
+    <div className={`mt-4 flex flex-wrap items-center gap-6 ${destacado ? "justify-center" : "text-sm"}`}>
       {destacado && <QrDescargable url={urlInvitado} nombre={evento.nombre} />}
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
+      <div className="flex min-w-0 flex-1 basis-64 flex-col gap-3">
         <Copiable etiqueta="Link para los invitados (el del QR)" valor={urlInvitado} />
         <Copiable etiqueta="Link de la pantalla" valor={urlPantalla} abrible />
         <VincularPantalla evento={evento} />
@@ -204,7 +205,10 @@ function QrDescargable({ url, nombre, chico = false }: { url: string; nombre: st
 
   return (
     <div className="flex flex-col items-center gap-2">
-      <canvas ref={lienzo} className={`rounded-xl bg-white ${chico ? "h-24 w-24" : "h-[220px] w-[220px]"}`} />
+      <canvas
+        ref={lienzo}
+        className={`rounded-xl bg-white ${chico ? "h-24 w-24" : "h-[min(220px,70vw)] w-[min(220px,70vw)]"}`}
+      />
       <button onClick={bajar} className="text-xs text-tenue underline underline-offset-4 hover:text-white">
         Bajar PNG
       </button>
@@ -257,7 +261,7 @@ function VincularPantalla({ evento }: { evento: EventoAdmin }) {
       <p className="text-xs text-tenue">Vincular una tele o un proyector con navegador</p>
       {codigo ? (
         <div className="mt-1 flex flex-wrap items-center gap-3">
-          <code className="rounded-lg bg-fondo px-3 py-1 font-mono text-2xl tracking-widest text-acento">
+          <code className="rounded-lg bg-hundido px-3 py-1 font-mono text-2xl tracking-widest text-acento">
             {codigo.slice(0, 3)} {codigo.slice(3)}
           </code>
           <span className="text-xs text-tenue">
@@ -266,15 +270,15 @@ function VincularPantalla({ evento }: { evento: EventoAdmin }) {
           </span>
         </div>
       ) : (
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex flex-wrap items-center gap-2">
           <button
             onClick={pedirCodigo}
             disabled={pidiendo}
-            className="rounded-lg border border-borde px-3 py-1 text-xs hover:border-acento disabled:opacity-50"
+            className="rounded-full border border-borde bg-panel px-3 py-1 text-xs hover:bg-white/15 disabled:opacity-50"
           >
             {pidiendo ? "Generando…" : "Generar código de 6 dígitos"}
           </button>
-          {falla && <span className="text-xs text-red-300">{falla}</span>}
+          {falla && <span className="text-xs text-rojo">{falla}</span>}
         </div>
       )}
     </div>
@@ -299,11 +303,13 @@ function Copiable({ etiqueta, valor, abrible = false }: { etiqueta: string; valo
   return (
     <div className="min-w-0">
       <p className="text-xs text-tenue">{etiqueta}</p>
-      <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-lg bg-fondo px-2 py-1 text-xs">{valor}</code>
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="min-w-0 flex-1 basis-full truncate rounded-lg bg-hundido px-2 py-1 text-xs sm:basis-0">
+          {valor}
+        </code>
         <button
           onClick={copiar}
-          className="shrink-0 rounded-lg border border-borde px-3 py-1 text-xs hover:border-acento"
+          className="shrink-0 rounded-full border border-borde bg-panel px-3 py-1 text-xs hover:bg-white/15"
         >
           {copiado ? "Copiado" : "Copiar"}
         </button>
@@ -312,7 +318,7 @@ function Copiable({ etiqueta, valor, abrible = false }: { etiqueta: string; valo
           // un segundo clic reusa la misma ventana en vez de abrir otra.
           <button
             onClick={() => window.open(valor, `pantalla-${valor}`, "popup,width=1280,height=720")}
-            className="shrink-0 rounded-lg border border-borde px-3 py-1 text-xs hover:border-acento"
+            className="shrink-0 rounded-full border border-borde bg-panel px-3 py-1 text-xs hover:bg-white/15"
           >
             Abrir en ventana
           </button>

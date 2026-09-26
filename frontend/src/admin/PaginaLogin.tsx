@@ -28,9 +28,9 @@ export default function PaginaLogin() {
   }
 
   return (
-    <main className="mx-auto flex h-full max-w-sm flex-col justify-center gap-6 p-8">
-      <h1 className="text-2xl font-semibold">Panel</h1>
-      <form onSubmit={entrar} className="flex flex-col gap-4">
+    <main className="mx-auto flex min-h-full max-w-sm flex-col justify-center gap-6 p-4 sm:p-8">
+      <form onSubmit={entrar} className="flex flex-col gap-4 rounded-3xl border border-borde bg-panel p-6">
+        <h1 className="mb-2 text-2xl font-semibold">Panel</h1>
         <input
           type="email"
           value={email}
@@ -38,7 +38,7 @@ export default function PaginaLogin() {
           placeholder="Email"
           autoComplete="username"
           required
-          className="min-h-boton rounded-2xl border border-borde bg-panel px-4 text-lg outline-none focus:border-acento"
+          className="min-h-boton rounded-2xl border border-borde bg-hundido px-4 text-lg outline-none focus:border-acento"
         />
         <input
           type="password"
@@ -47,7 +47,7 @@ export default function PaginaLogin() {
           placeholder="Contraseña"
           autoComplete="current-password"
           required
-          className="min-h-boton rounded-2xl border border-borde bg-panel px-4 text-lg outline-none focus:border-acento"
+          className="min-h-boton rounded-2xl border border-borde bg-hundido px-4 text-lg outline-none focus:border-acento"
         />
         <Boton type="submit" cargando={enviando}>
           Entrar

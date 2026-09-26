@@ -50,15 +50,15 @@ export default function PaginaVincular({ onVinculada }: Props) {
   }
 
   return (
-    <main className="flex h-full flex-col items-center justify-center gap-8 p-8 text-center">
+    <main className="flex min-h-full flex-col items-center justify-center gap-6 p-4 text-center sm:gap-8 sm:p-8">
       <div>
-        <h1 className="text-5xl font-semibold leading-tight">Vinculá esta pantalla</h1>
-        <p className="mt-3 text-2xl text-tenue">
+        <h1 className="text-3xl font-semibold leading-tight sm:text-5xl">Vinculá esta pantalla</h1>
+        <p className="mt-3 text-lg text-tenue sm:text-2xl">
           Pedí el código en el panel y cargalo acá
         </p>
       </div>
 
-      <form onSubmit={enviar} className="flex flex-col items-center gap-6">
+      <form onSubmit={enviar} className="flex w-full max-w-md flex-col items-center gap-6 rounded-3xl border border-borde bg-panel p-6 sm:p-8">
         <input
           ref={entrada}
           value={codigo}
@@ -72,21 +72,21 @@ export default function PaginaVincular({ onVinculada }: Props) {
           aria-label="Código de seis dígitos"
           // 12ch y no menos: con `tracking-[0.2em]`, el relleno y el borde, en 9ch
           // se cortaba el último dígito. Así entra también «800 181» con espacio.
-          className="w-[12ch] rounded-2xl border-4 border-borde bg-panel px-6 py-4 text-center font-mono text-6xl tracking-[0.2em] text-white outline-none focus:border-acento"
+          className="w-[12ch] max-w-full rounded-2xl border-4 border-borde bg-hundido px-3 py-4 text-center font-mono text-4xl tracking-[0.2em] text-white outline-none focus:border-acento sm:px-6 sm:text-6xl"
         />
 
         <button
           type="submit"
           disabled={soloDigitos.length !== 6 || enviando}
-          className="min-h-boton rounded-2xl bg-acento px-10 text-2xl font-semibold text-black transition disabled:opacity-40"
+          className="min-h-boton rounded-full bg-acento px-10 text-xl font-semibold text-white transition disabled:opacity-40 sm:text-2xl"
         >
           {enviando ? "Vinculando…" : "Vincular"}
         </button>
       </form>
 
-      {error && <p className="max-w-xl text-2xl text-amber-300">{error}</p>}
+      {error && <p className="max-w-xl text-lg text-naranja sm:text-2xl">{error}</p>}
 
-      <p className="max-w-xl text-lg text-tenue">
+      <p className="max-w-xl text-base text-tenue sm:text-lg">
         El código dura diez minutos y sirve una sola vez.
       </p>
     </main>

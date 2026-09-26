@@ -176,7 +176,7 @@ export default function PaginaInvitado() {
               onChange={(e) => setNombre(e.target.value)}
               placeholder={textos.ejemploNombre}
               maxLength={80}
-              className="mt-1 min-h-boton w-full rounded-2xl border border-borde bg-panel px-4 text-lg text-white outline-none focus:border-acento"
+              className="mt-1 min-h-boton w-full rounded-2xl border border-borde bg-hundido px-4 text-lg text-white outline-none focus:border-acento"
             />
           </label>
           <Boton onClick={() => entrada.current?.click()}>{textos.botonPrincipal}</Boton>
@@ -195,7 +195,7 @@ export default function PaginaInvitado() {
           <VistaPrevia foto={foto} />
           <p className="text-xl tabular-nums">{textos.subiendo(estado.porcentaje)}</p>
           <div
-            className="h-3 w-full overflow-hidden rounded-full bg-panel"
+            className="h-3 w-full overflow-hidden rounded-full bg-hundido"
             role="progressbar"
             aria-valuenow={estado.porcentaje}
             aria-valuemin={0}
@@ -235,11 +235,15 @@ export default function PaginaInvitado() {
   );
 }
 
-/** Sin scroll, centrado, y el botón siempre al alcance del pulgar. */
+/** Centrado, en una tarjeta de vidrio, y el botón siempre al alcance del
+ *  pulgar. Si la pantalla es muy baja (celular acostado) scrollea en vez de
+ *  cortar el botón. */
 function Pantalla({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto flex h-full max-w-md flex-col items-center justify-center gap-5 overflow-hidden p-6 text-center">
-      {children}
+    <main className="mx-auto flex min-h-full max-w-md flex-col items-center justify-center p-4 sm:p-6">
+      <div className="flex w-full flex-col items-center gap-5 rounded-3xl border border-borde bg-panel p-6 text-center">
+        {children}
+      </div>
     </main>
   );
 }

@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
 import type { EstadoFoto, EventoAdmin, FotoAdmin } from "../api/tipos";
+import Boton from "../comp/Boton";
 import Cargando from "../comp/Cargando";
 import MensajeError from "../comp/MensajeError";
 import { colorDelEvento } from "./color";
@@ -233,22 +234,24 @@ export default function PaginaModerar() {
   const color = colorDelEvento(evento.codigo_publico);
 
   return (
-    <div className="flex h-full flex-col">
+    // Con poca altura (un celular acostado) la foto no puede quedar en cero: tiene
+    // un mínimo y, si no entra todo, la página scrollea.
+    <div className="flex h-full flex-col overflow-y-auto">
       {/* Barra de contexto fija: con dos pestañas abiertas, esto es lo que
           evita aprobar las fotos del evento equivocado. */}
       <header
-        className="flex shrink-0 items-center justify-between gap-4 border-b-4 px-6 py-3"
-        style={{ borderColor: color, background: "#16161d" }}
+        className="flex shrink-0 items-center justify-between gap-3 border-b-4 bg-panel px-4 py-3 sm:gap-4 sm:px-6"
+        style={{ borderColor: color }}
       >
-        <div className="flex items-center gap-3">
-          <span className="h-4 w-4 rounded-full" style={{ background: color }} />
-          <h1 className="text-lg font-semibold">{evento.nombre}</h1>
-          <span className="text-sm text-tenue">{evento.fecha_evento}</span>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="h-4 w-4 shrink-0 rounded-full" style={{ background: color }} />
+          <h1 className="truncate text-base font-semibold sm:text-lg">{evento.nombre}</h1>
+          <span className="hidden text-sm text-tenue sm:inline">{evento.fecha_evento}</span>
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex shrink-0 items-center gap-4 sm:gap-6">
           <p className="text-right">
-            <strong className="text-4xl tabular-nums" style={{ color }}>{fotos.length}</strong>
-            <span className="ml-2 text-tenue">{fotos.length === 1 ? "pendiente" : "pendientes"}</span>
+            <strong className="text-2xl tabular-nums sm:text-4xl" style={{ color }}>{fotos.length}</strong>
+            <span className="ml-2 text-sm text-tenue sm:text-base">{fotos.length === 1 ? "pendiente" : "pendientes"}</span>
           </p>
           <Link to="/admin" className="text-sm text-tenue underline underline-offset-4 hover:text-white">
             Eventos
@@ -259,7 +262,7 @@ export default function PaginaModerar() {
       {enEspera.length > 0 && (
         <button
           onClick={incorporar}
-          className="shrink-0 bg-acento/20 py-2 text-center text-sm text-acento hover:bg-acento/30"
+          className="shrink-0 bg-acento/20 py-2 text-center text-sm text-white hover:bg-acento/30"
         >
           {enEspera.length === 1 ? "1 nueva" : `${enEspera.length} nuevas`} · tocá para incorporarlas
         </button>
@@ -268,19 +271,19 @@ export default function PaginaModerar() {
       {aviso && (
         <button
           onClick={() => setAviso(null)}
-          className="shrink-0 bg-red-900/40 py-2 text-center text-sm text-red-200"
+          className="shrink-0 bg-rojo/20 py-2 text-center text-sm text-rojo"
         >
           {aviso} · tocá para cerrar
         </button>
       )}
 
       {/* Foto grande: se decide mirando la foto en grande, no la miniatura. */}
-      <div className="relative min-h-0 flex-1 bg-fondo">
+      <div className="relative min-h-[45vh] flex-1 bg-black/40">
         {actual ? (
           <>
             <img src={actual.url} alt="" className="h-full w-full object-contain" />
             {actual.nombre_invitado && (
-              <p className="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-black/60 px-4 py-1 text-lg">
+              <p className="vidrio-oscuro absolute bottom-4 left-1/2 max-w-[90%] -translate-x-1/2 truncate rounded-full px-4 py-1 text-lg">
                 {actual.nombre_invitado}
               </p>
             )}
@@ -292,6 +295,22 @@ export default function PaginaModerar() {
           </div>
         )}
       </div>
+
+      {/* Botones para el dedo o el mouse. Los atajos de teclado siguen andando;
+          esto es para moderar desde el celular, que no tiene teclado. */}
+      {actual && (
+        <div className="grid shrink-0 grid-cols-[1fr_auto_1fr] gap-2 border-t border-borde bg-panel p-3 sm:gap-3">
+          <Boton variante="peligro" onClick={() => alActuar("rechazar")}>
+            {seleccion.size > 1 ? `Rechazar ${seleccion.size}` : "Rechazar"}
+          </Boton>
+          <Boton variante="secundario" className="px-4" onClick={() => alActuar("deshacer")} aria-label="Deshacer">
+            ↶
+          </Boton>
+          <Boton onClick={() => alActuar("aprobar")}>
+            {seleccion.size > 1 ? `Aprobar ${seleccion.size}` : "Aprobar"}
+          </Boton>
+        </div>
+      )}
 
       {/* Fila de miniaturas */}
       <div className="flex shrink-0 gap-2 overflow-x-auto border-t border-borde bg-panel p-3">
@@ -312,7 +331,7 @@ export default function PaginaModerar() {
         ))}
       </div>
 
-      <footer className="shrink-0 border-t border-borde bg-panel px-6 py-2 text-center text-sm text-tenue">
+      <footer className="hidden shrink-0 border-t border-borde bg-panel px-6 py-2 text-center text-sm text-tenue sm:block">
         <kbd className="text-white">←</kbd> <kbd className="text-white">→</kbd> navegar ·{" "}
         <kbd className="text-white">A</kbd> aprobar · <kbd className="text-white">R</kbd> rechazar ·{" "}
         <kbd className="text-white">Z</kbd> deshacer · Shift+click para seleccionar varias

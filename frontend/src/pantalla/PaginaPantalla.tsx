@@ -107,7 +107,7 @@ export default function PaginaPantalla({ tokenVinculado }: Props = {}) {
           {anterior && <Capa key={anterior.id} url={anterior.url} />}
           <Capa key={foto.id} url={foto.url} apareciendo />
           {foto.nombre_invitado && (
-            <p className="absolute bottom-10 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-6 py-2 text-2xl text-white backdrop-blur">
+            <p className="vidrio-oscuro absolute bottom-6 left-1/2 max-w-[80%] -translate-x-1/2 truncate rounded-full px-5 py-2 text-lg text-white sm:bottom-10 sm:px-6 sm:text-2xl">
               {foto.nombre_invitado}
             </p>
           )}
@@ -116,37 +116,39 @@ export default function PaginaPantalla({ tokenVinculado }: Props = {}) {
 
       {/* ── Esperando: QR enorme en el centro ─────────────── */}
       {!hayFotos && !cerrado && (
-        <div className="flex h-full flex-col items-center justify-center gap-10">
-          <QR url={urlDelQr} lado={520} className="w-[38vmin] max-w-none p-4" />
-          <p className="text-4xl font-semibold">Mandá tu foto y aparece acá</p>
+        <div className="flex h-full flex-col items-center justify-center gap-6 px-6 text-center sm:gap-10">
+          <div className="rounded-[2rem] border border-borde bg-panel p-4 sm:p-6">
+            <QR url={urlDelQr} lado={520} className="w-[min(38vmin,70vw)] max-w-none p-4" />
+          </div>
+          <p className="text-2xl font-semibold sm:text-4xl">Mandá tu foto y aparece acá</p>
         </div>
       )}
 
       {/* ── Evento cerrado sin fotos ──────────────────────── */}
       {!hayFotos && cerrado && (
         <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-          <h1 className="text-5xl font-semibold">{datos.evento.nombre}</h1>
-          <p className="text-3xl text-tenue">¡Gracias por las fotos!</p>
+          <h1 className="px-6 text-3xl font-semibold sm:text-5xl">{datos.evento.nombre}</h1>
+          <p className="text-xl text-tenue sm:text-3xl">¡Gracias por las fotos!</p>
         </div>
       )}
 
       {/* ── QR chico, en una esquina fija. Desaparece al cerrar ── */}
       {hayFotos && !cerrado && (
-        <div className="absolute bottom-8 right-8 flex flex-col items-center gap-2">
-          <QR url={urlDelQr} lado={220} className="w-[13vmin] p-2" />
-          <p className="text-sm text-white/80">Mandá la tuya</p>
+        <div className="vidrio-oscuro absolute bottom-4 right-4 flex flex-col items-center gap-2 rounded-2xl p-2 sm:bottom-8 sm:right-8 sm:p-3">
+          <QR url={urlDelQr} lado={220} className="w-[max(13vmin,64px)] p-2" />
+          <p className="text-xs text-white/80 sm:text-sm">Mandá la tuya</p>
         </div>
       )}
 
       {hayFotos && cerrado && (
-        <p className="absolute bottom-8 right-8 rounded-full bg-black/50 px-5 py-2 text-xl text-white/90 backdrop-blur">
+        <p className="vidrio-oscuro absolute bottom-4 right-4 rounded-full px-4 py-2 text-base text-white/90 sm:bottom-8 sm:right-8 sm:px-5 sm:text-xl">
           ¡Gracias por las fotos!
         </p>
       )}
 
       {/* ── Llegó una nueva: marca discreta y breve ───────── */}
       {llegaron > 0 && hayFotos && (
-        <div className="pointer-events-none absolute left-8 top-8 animate-pulse rounded-full bg-acento/90 px-5 py-2 text-lg font-semibold text-black">
+        <div className="pointer-events-none absolute left-4 top-4 animate-pulse rounded-full bg-acento px-4 py-2 text-base font-semibold text-white shadow-lg sm:left-8 sm:top-8 sm:px-5 sm:text-lg">
           {llegaron === 1 ? "Llegó una foto nueva" : `Llegaron ${llegaron} fotos nuevas`}
         </div>
       )}
@@ -154,14 +156,14 @@ export default function PaginaPantalla({ tokenVinculado }: Props = {}) {
       {/* ── Sin conexión: indicador mínimo, sin frenar el pase ── */}
       {sinConexion && (
         <div
-          className="absolute right-8 top-8 h-3 w-3 rounded-full bg-amber-400/80"
+          className="absolute right-8 top-8 h-3 w-3 rounded-full bg-naranja/80"
           title="Sin conexión con el servidor"
           aria-label="Sin conexión con el servidor"
         />
       )}
 
       {!pantallaCompleta && (
-        <p className="absolute left-1/2 top-8 -translate-x-1/2 rounded-full bg-black/60 px-5 py-2 text-sm text-white/70">
+        <p className="vidrio-oscuro absolute left-1/2 top-4 max-w-[90%] -translate-x-1/2 rounded-full px-5 py-2 text-center text-sm text-white/70 sm:top-8">
           Tocá cualquier tecla para pantalla completa
         </p>
       )}
@@ -173,7 +175,7 @@ export default function PaginaPantalla({ tokenVinculado }: Props = {}) {
             guardarPantalla(null);
             window.location.reload();
           }}
-          className="absolute left-8 bottom-8 rounded-full bg-black/60 px-4 py-2 text-sm text-white/60 hover:text-white"
+          className="vidrio-oscuro absolute bottom-4 left-4 rounded-full px-4 py-2 text-sm text-white/60 hover:text-white sm:bottom-8 sm:left-8"
         >
           Desvincular esta pantalla
         </button>

@@ -98,7 +98,7 @@ export default function PaginaCierre() {
       <section className="mb-8 grid grid-cols-3 gap-3 text-center">
         {([["Pendientes", evento.pendientes], ["Aprobadas", evento.aprobadas], ["Rechazadas", evento.rechazadas]] as const).map(
           ([etiqueta, valor]) => (
-            <div key={etiqueta} className="rounded-2xl border border-borde bg-panel p-4">
+            <div key={etiqueta} className="rounded-3xl border border-borde bg-panel p-4">
               <p className="text-3xl font-semibold tabular-nums">{valor}</p>
               <p className="text-sm text-tenue">{etiqueta}</p>
             </div>
@@ -106,7 +106,7 @@ export default function PaginaCierre() {
         )}
       </section>
 
-      <section className="mb-8 rounded-2xl border border-borde bg-panel p-5">
+      <section className="mb-8 rounded-3xl border border-borde bg-panel p-5">
         <h2 className="mb-2 text-lg font-semibold">Estado del evento</h2>
         <p className="mb-4 text-sm text-tenue">
           Cerrar deja de aceptar fotos nuevas y muestra el mensaje de cierre en la
@@ -130,7 +130,7 @@ export default function PaginaCierre() {
 
       <VideoDelEvento idEvento={evento.id} aprobadas={evento.aprobadas} />
 
-      <section className="rounded-2xl border border-borde bg-panel p-5">
+      <section className="rounded-3xl border border-borde bg-panel p-5">
         <h2 className="mb-2 text-lg font-semibold">Descargar las fotos</h2>
         <p className="mb-4 text-sm text-tenue">
           {total === 1 ? "1 foto" : `${total} fotos`} en total. Doscientas fotos no salen en dos segundos: el
@@ -193,10 +193,10 @@ function Configuracion({ evento, onGuardado }: { evento: EventoAdmin; onGuardado
   }
 
   const campo =
-    "mt-1 h-12 w-28 rounded-xl border border-borde bg-fondo px-3 text-base text-white outline-none focus:border-acento";
+    "mt-1 h-12 w-28 rounded-xl border border-borde bg-hundido px-3 text-base text-white outline-none focus:border-acento";
 
   return (
-    <form onSubmit={guardar} className="mb-8 rounded-2xl border border-borde bg-panel p-5">
+    <form onSubmit={guardar} className="mb-8 rounded-3xl border border-borde bg-panel p-5">
       <h2 className="mb-2 text-lg font-semibold">Configuración</h2>
       <p className="mb-4 text-sm text-tenue">
         La pantalla toma los segundos nuevos sola, en unos segundos, sin recargarla.
@@ -279,7 +279,7 @@ function VideoDelEvento({ idEvento, aprobadas }: { idEvento: number; aprobadas: 
   const segundos = aprobadas * 3;
 
   return (
-    <section className="mb-8 rounded-2xl border border-borde bg-panel p-5">
+    <section className="mb-8 rounded-3xl border border-borde bg-panel p-5">
       <h2 className="mb-2 text-lg font-semibold">Video del evento</h2>
       <p className="mb-4 text-sm text-tenue">
         Un video con las fotos aprobadas, en el orden en que llegaron, 3 segundos cada una.
@@ -300,7 +300,7 @@ function VideoDelEvento({ idEvento, aprobadas }: { idEvento: number; aprobadas: 
           <video src={video.url} controls className="mb-3 w-full rounded-xl bg-black" />
           <a
             href={urlDeDescarga(video.url)}
-            className="inline-block rounded-xl border border-borde px-4 py-2 text-sm hover:border-acento"
+            className="inline-block rounded-full border border-borde bg-panel px-4 py-2 text-sm hover:bg-white/15"
           >
             Descargar video ({video.fotos} fotos)
           </a>

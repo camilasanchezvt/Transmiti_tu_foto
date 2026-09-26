@@ -11,15 +11,67 @@
 
   body {
     @apply bg-fondo text-white antialiased;
+    /* San Francisco en los Apple; en el resto, la fuente del sistema. */
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+    letter-spacing: -0.01em;
     /* El invitado usa la app con una mano en un salón oscuro. Nada de rebote
        ni de zoom accidental al tocar dos veces. */
     overscroll-behavior: none;
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* Fondo. El vidrio necesita color detrás para que el desenfoque se note:
+     sobre negro liso un panel translúcido es sólo gris. En vez de degradés son
+     tres círculos de color sólido, desenfocados, como un fondo de pantalla de
+     iOS. Van en un ::before fijo porque background-attachment: fixed no anda
+     en iOS. */
+  body::before {
+    content: "";
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 1px;
+    height: 1px;
+    z-index: -1;
+    pointer-events: none;
+    box-shadow:
+      15vw 10vh 0 22vmax rgb(10 132 255 / 0.32),
+      90vw 35vh 0 20vmax rgb(191 90 242 / 0.28),
+      45vw 105vh 0 26vmax rgb(255 159 10 / 0.18);
+    filter: blur(90px);
+  }
+
   /* Respeta el notch del iPhone: el botón principal no puede quedar debajo de
      la barra de gestos. */
   #root {
     padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* El selector de fecha y los números nativos, en oscuro. */
+  input {
+    color-scheme: dark;
+  }
+}
+
+@layer utilities {
+  /* Todo lo que usa bg-panel es vidrio: fondo translúcido, desenfoque de lo que
+     queda detrás y un brillo de un píxel arriba, como el canto de un cristal.
+     Centralizado acá para que ningún componente tenga que repetirlo. */
+  .bg-panel {
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.22),
+      inset 0 0 0 0.5px rgb(255 255 255 / 0.08),
+      0 12px 32px -12px rgb(0 0 0 / 0.6);
+  }
+
+  /* Vidrio oscuro para lo que va encima de una foto: tiene que leerse sobre
+     cualquier imagen, clara u oscura. */
+  .vidrio-oscuro {
+    background-color: rgb(0 0 0 / 0.4);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid rgb(255 255 255 / 0.14);
   }
 }
