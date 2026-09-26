@@ -95,7 +95,18 @@ export function useCola(token: string): Cola {
   const ultimoId = useRef(0);
   const vivo = useRef(true);
 
-  const config = datos?.config;
+  // Se usan los valores sueltos y no el objeto `config`: el polling vuelve a
+  // pedir la configuración en cada pasada y cada respuesta es un objeto nuevo.
+  // Con el objeto en las dependencias, el temporizador del avance se reiniciaba
+  // cada 6 s y, con 7 s por foto, no llegaba a cumplirse nunca.
+  const segundosPorFoto = datos?.config.segundos_por_foto;
+  const intervaloPolling = datos?.config.intervalo_polling_ms;
+  const maximoBuffer = datos?.config.maximo_buffer;
+
+  // Cuenta avances. Con una sola foto, la "siguiente" es la misma y `foto` no
+  // cambia: sin este contador el avance no se volvía a programar nunca, ni
+  // siquiera cuando después llegaban más.
+  const [avances, setAvances] = useState(0);
 
   // ── Arranque en frío ────────────────────────────────────────
   useEffect(() => {
@@ -137,13 +148,13 @@ export function useCola(token: string): Cola {
   const pasadas = useRef(0);
 
   const buscarNuevas = useCallback(async () => {
-    if (!config) return;
+    if (!maximoBuffer) return;
     try {
       pasadas.current++;
       const toca = pasadas.current % PASADAS_ENTRE_RESINCRONIZACIONES === 0;
 
       const cola = toca
-        ? await api.fotos(token, 0, config.maximo_buffer)
+        ? await api.fotos(token, 0, maximoBuffer)
         : await api.fotos(token, ultimoId.current);
       if (!vivo.current) return;
 
@@ -173,7 +184,7 @@ export function useCola(token: string): Cola {
 
       // Si se pasó del tope, se descartan las más VIEJAS, nunca las recién
       // insertadas.
-      const tope = config.maximo_buffer;
+      const tope = maximoBuffer;
       if (buffer.current.length > tope) {
         const sobran = buffer.current.length - tope;
         const nuevas = new Set(recien.map((f) => f.id));
@@ -204,17 +215,17 @@ export function useCola(token: string): Cola {
       fallos.current++;
       setSinConexion(true);
     }
-  }, [token, config, hayFotos]);
+  }, [token, maximoBuffer, hayFotos]);
 
   useEffect(() => {
-    if (!config) return;
+    if (!intervaloPolling) return;
     let cancelado = false;
     let id: number;
 
     const programar = () => {
       const espera =
         fallos.current === 0
-          ? config.intervalo_polling_ms
+          ? intervaloPolling
           : ESPERAS_MS[Math.min(fallos.current - 1, ESPERAS_MS.length - 1)]!;
       id = window.setTimeout(async () => {
         if (cancelado) return;
@@ -228,11 +239,11 @@ export function useCola(token: string): Cola {
       cancelado = true;
       window.clearTimeout(id);
     };
-  }, [config, buscarNuevas]);
+  }, [intervaloPolling, buscarNuevas]);
 
   // ── Avance, con precarga ────────────────────────────────────
   useEffect(() => {
-    if (!config || !hayFotos || !foto) return;
+    if (!segundosPorFoto || !hayFotos || !foto) return;
     let cancelado = false;
 
     const id = window.setTimeout(async () => {
@@ -255,8 +266,11 @@ export function useCola(token: string): Cola {
         if (await precargar(candidata.url)) {
           if (cancelado) return;
           indice.current = siguiente;
-          setAnterior(foto);
-          setFoto(candidata);
+          if (candidata.id !== foto.id) {
+            setAnterior(foto);
+            setFoto(candidata);
+          }
+          setAvances((n) => n + 1);
           return;
         }
 
@@ -268,13 +282,13 @@ export function useCola(token: string): Cola {
           return;
         }
       }
-    }, config.segundos_por_foto * 1000);
+    }, segundosPorFoto * 1000);
 
     return () => {
       cancelado = true;
       window.clearTimeout(id);
     };
-  }, [config, foto, hayFotos]);
+  }, [segundosPorFoto, foto, hayFotos, avances]);
 
   return { cargando, error, datos, foto, anterior, hayFotos, sinConexion, llegaron };
 }
