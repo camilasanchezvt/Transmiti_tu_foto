@@ -109,6 +109,36 @@ export const textosCuentas = {
     },
   } satisfies Record<AccionConfirmada, Confirmacion>,
 
+  /**
+   * Eliminar definitivamente: la única excepción a "nada se borra". Sólo lo ve
+   * una superadmin, y nunca sobre otra superadmin ni sobre la propia cuenta.
+   * Se borran el nombre, el email y la contraseña; los eventos, con fotos y
+   * videos, pasan a la cuenta de quien elimina. Se confirma escribiendo el
+   * email de la cuenta.
+   */
+  eliminar: {
+    accion: "Eliminar definitivamente",
+    titulo: (nombre: string) => `¿Eliminar a ${nombre} para siempre?`,
+    noSeDeshace: "No se puede deshacer.",
+    seBorra: "Se borran su nombre, su email y su contraseña.",
+    /** n = los eventos que tiene hoy: los que van a pasar a tu cuenta. */
+    eventos: (n: number) =>
+      n === 0
+        ? "No tiene eventos."
+        : n === 1
+          ? "Su evento, con las fotos y los videos, pasa a tu cuenta."
+          : `Sus ${n} eventos, con las fotos y los videos, pasan a tu cuenta.`,
+    etiqueta: "Para confirmar, escribí su email:",
+    confirmar: "Eliminar definitivamente",
+    /** El aviso de abajo. n = los que pasaron de verdad, según el backend. */
+    hecho: (n: number) =>
+      n === 0
+        ? "Cuenta eliminada."
+        : n === 1
+          ? "Cuenta eliminada. Su evento pasó a tu cuenta."
+          : `Cuenta eliminada. Sus ${n} eventos pasaron a tu cuenta.`,
+  },
+
   /** El aviso de abajo, después de cada cambio: la tarjeta suele mudarse de
    *  sección y sin esto parece que desapareció. */
   hecho: {

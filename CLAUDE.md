@@ -26,7 +26,9 @@ Deploy: Render.
    `eventos/{codigo_publico}/`. Sin esto se puede proyectar cualquier imagen.
 5. Todas las marcas de tiempo son `timestamptz`. Nunca `timestamp` pelado.
 6. Estados como `text` + `CHECK`, no ENUM.
-7. Nada se borra. Rechazar es un estado, no un DELETE.
+7. Nada se borra. Rechazar es un estado, no un DELETE. Única excepción:
+   un superadmin elimina una cuenta (`DELETE /api/admin/cuentas/{id}`, sección 5);
+   se borra sólo su fila de `usuarios` y sus eventos pasan a él.
 8. Moderar es idempotente.
 9. No inventar endpoints fuera del contrato de CONSTRUIR-APP.md.
    Si hace falta uno nuevo, proponerlo antes de escribirlo.

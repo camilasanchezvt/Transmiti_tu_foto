@@ -16,26 +16,44 @@ Quién gestiona a quién (la matriz completa está en `_exigir_permiso`):
 Nada se borra: dar de baja es un estado. La cuenta no puede entrar, pero sus
 eventos y fotos quedan, los admins los siguen viendo y se puede reactivar.
 
+La única excepción a la regla 7 es `eliminar_cuenta`, sólo para superadmins:
+borra la fila de la cuenta para siempre y sus eventos pasan a quien la elimina
+(ver el docstring del endpoint).
+
 Nadie cambia su propio rol ni su propio estado. Así el sistema nunca se queda
 sin admins por un clic de más, y nadie se bloquea solo. El nombre propio sí.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..deps import es_superadmin, solo_admin
+from ..deps import es_superadmin, solo_admin, solo_superadmin
 from ..errores import Codigo, ErrorApp
-from ..models import Evento, Usuario
+from ..models import Evento, Foto, Usuario
 from ..ratelimit import ip_del_pedido, limpiar_cada_tanto, permitido
-from ..schemas import CambioCuenta, Cuenta, PedidoRegistro, RegistroRecibido, RespuestaError
+from ..schemas import (
+    CambioCuenta,
+    Cuenta,
+    CuentaEliminada,
+    PedidoEliminarCuenta,
+    PedidoRegistro,
+    RegistroRecibido,
+    RespuestaError,
+)
 from ..security import hashear_password
+
+# Hijo del de uvicorn, que en Render sale en el log a nivel INFO (el de
+# `app.*` sólo mostraría los errores). Los mensajes empiezan con "cuentas:"
+# porque el log de uvicorn no muestra el nombre del logger.
+log = logging.getLogger("uvicorn.error").getChild("cuentas")
 
 # El registro es público: sin tope, un script llena la tabla de cuentas
 # pendientes. Cinco por hora y por IP alcanzan para una persona que se equivoca
@@ -233,3 +251,98 @@ def cambiar_cuenta(
         db.refresh(cuenta)
 
     return _como_cuenta(cuenta, _historiales(db, [cuenta.id]).get(cuenta.id))
+
+
+# ─────────────────────────────────────────────────────────────
+# Eliminar una cuenta para siempre — sólo superadmins
+# ─────────────────────────────────────────────────────────────
+
+_ELIMINAR_SUPERADMIN = "A una cuenta superadmin no se la elimina desde el panel"
+_ELIMINAR_PROPIA = "No podés eliminar tu propia cuenta"
+_EMAIL_NO_COINCIDE = "El email no coincide con el de la cuenta"
+
+
+def _email_comparable(email: str) -> str:
+    """Sin espacios alrededor y sin mayúsculas: lo mismo que hace el diálogo del panel."""
+    return email.strip().lower()
+
+
+@administracion.delete(
+    "/{id_cuenta}",
+    response_model=CuentaEliminada,
+    responses={
+        403: {"model": RespuestaError,
+              "description": "NO_AUTORIZADO: quien pide no es superadmin, "
+                             "o la cuenta es de un superadmin"},
+        404: {"model": RespuestaError, "description": "DATOS_INVALIDOS: la cuenta no existe"},
+        422: {"model": RespuestaError,
+              "description": "DATOS_INVALIDOS: es la propia cuenta, el email no coincide "
+                             "o el cuerpo está mal formado"},
+    },
+    summary="Eliminar una cuenta para siempre (sólo superadmin)",
+)
+def eliminar_cuenta(
+    id_cuenta: int,
+    pedido: PedidoEliminarCuenta,
+    db: Session = Depends(get_db),
+    actor: Usuario = Depends(solo_superadmin),
+) -> CuentaEliminada:
+    """La única excepción a "nada se borra" (regla 7), y sólo para superadmins.
+
+    Se borra la fila de `usuarios` y nada más: el nombre, el email y la
+    contraseña. Los eventos de la cuenta, con sus fotos y videos, pasan a la
+    cuenta del superadmin que la elimina; en `fotos.moderada_por`, lo que
+    moderó queda en NULL. Las tres cosas en una sola transacción: o pasa todo,
+    o no pasa nada.
+
+    | objetivo                                   | admin u organizador | superadmin |
+    |--------------------------------------------|---------------------|------------|
+    | organizador (pendiente, activa o de baja)  |         403         |    200     |
+    | admin (activo o de baja)                   |         403         |    200     |
+    | otro superadmin                            |         403         |    403     |
+    | la propia cuenta                           |         403         |    422     |
+    | una cuenta que no existe                   |         403         |    404     |
+
+    Además `confirmar_email` tiene que ser el email de la cuenta (sin
+    mayúsculas ni espacios alrededor), o 422. En cada rechazo la base queda
+    como estaba.
+
+    Después, el token de la cuenta eliminada deja de servir (`usuario_actual`
+    no la encuentra) y el email queda libre para registrarse de nuevo. El id no
+    se reusa: es IDENTITY, así que un token viejo nunca apunta a la cuenta nueva.
+
+    La fila se toma con FOR UPDATE antes de mirar nada. Un evento nuevo para
+    esta cuenta, o una foto que modera en ese momento, necesita FOR KEY SHARE
+    sobre la misma fila (clave foránea): espera a que esto termine y no queda
+    ninguna referencia colgada que haga fallar el DELETE.
+    """
+    cuenta = db.get(Usuario, id_cuenta, with_for_update=True)
+    if cuenta is None:
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, "No encontramos esa cuenta", http=404)
+    if cuenta.id == actor.id:
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _ELIMINAR_PROPIA)
+    if cuenta.rol == "superadmin":
+        raise ErrorApp(Codigo.NO_AUTORIZADO, _ELIMINAR_SUPERADMIN, http=403)
+    if _email_comparable(pedido.confirmar_email) != _email_comparable(cuenta.email):
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _EMAIL_NO_COINCIDE)
+
+    id_actor, id_eliminada = actor.id, cuenta.id
+    # RETURNING: después del commit, los eventos transferidos se mezclan con los
+    # del superadmin. Sus ids en el log son lo único que permite devolverlos si
+    # se eliminó por error (volver a registrar la cuenta y
+    # UPDATE eventos SET usuario_id = <nuevo> WHERE id IN (...)).
+    ids_eventos = sorted(db.execute(
+        update(Evento).where(Evento.usuario_id == id_eliminada)
+        .values(usuario_id=id_actor).returning(Evento.id)
+    ).scalars().all())
+    transferidos = len(ids_eventos)
+    db.execute(update(Foto).where(Foto.moderada_por == id_eliminada).values(moderada_por=None))
+    db.execute(delete(Usuario).where(Usuario.id == id_eliminada))
+    db.commit()
+
+    # Sólo ids: el email y el nombre de la cuenta eliminada no quedan ni en el log.
+    log.info(
+        "cuentas: la cuenta %s eliminó la cuenta %s; sus %s eventos pasaron a la cuenta %s: %s",
+        id_actor, id_eliminada, transferidos, id_actor, ids_eventos,
+    )
+    return CuentaEliminada(eventos_transferidos=transferidos)

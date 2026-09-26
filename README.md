@@ -109,7 +109,7 @@ tres sin nombre; y fotos repartidas a lo largo de dos horas.
 
 | Email | Rol y estado | Qué ve |
 |---|---|---|
-| `sofia@transmitifoto.test` | superadmin, activa | lo de Ana, y además gestiona a los admins |
+| `sofia@transmitifoto.test` | superadmin, activa | lo de Ana, gestiona a los admins y puede eliminar cuentas para siempre |
 | `ana@transmitifoto.test` | admin, activa | todos los eventos y la pestaña Cuentas |
 | `bruno@transmitifoto.test` | organizador, activa | sólo el suyo, *Cumple de 15 de Malena*, que está en Historial |
 | `carla@transmitifoto.test` | organizador, pendiente | no puede entrar hasta que un admin la habilite |

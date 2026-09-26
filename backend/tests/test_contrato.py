@@ -102,6 +102,10 @@ AGREGADOS = [
     # reactivarlas o cambiarles el rol. Dar de baja reemplaza a borrar.
     ("GET", "/api/admin/cuentas"),
     ("PATCH", "/api/admin/cuentas/{id_cuenta}"),
+    # Eliminar una cuenta para siempre (26-sep-2026): la única excepción a
+    # "nada se borra", sólo para superadmins. Sus eventos pasan a quien la
+    # elimina, y el email de la cuenta se confirma en el cuerpo, no en la URL.
+    ("DELETE", "/api/admin/cuentas/{id_cuenta}"),
 ]
 
 
@@ -146,7 +150,7 @@ def test_no_hay_endpoints_inventados(cliente):
 
 def test_los_agregados_estan_publicados(cliente):
     """Si alguno desaparece, se perdió algo que se agregó a propósito: la
-    vinculación por código corto, el video o las cuentas."""
+    vinculación por código corto, el video, las cuentas o eliminarlas."""
     rutas = rutas_publicadas(cliente)
     faltan = [x for x in AGREGADOS if x not in rutas]
     assert faltan == [], faltan
@@ -217,6 +221,7 @@ RUTAS_PROTEGIDAS = [
     ("get", "/api/admin/yo"),
     ("get", "/api/admin/cuentas"),
     ("patch", "/api/admin/cuentas/1"),
+    ("delete", "/api/admin/cuentas/1"),
 ]
 
 

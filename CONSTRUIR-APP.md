@@ -226,7 +226,7 @@ Los dos se generan con `secrets.token_urlsafe`, nunca a partir del id ni de la f
 
 - Todas las marcas de tiempo son `timestamptz`. Nunca `timestamp` pelado: el servidor está en UTC y el evento en Argentina.
 - Los estados son `text` con `CHECK`, no tipos ENUM.
-- Nada se borra: una foto rechazada sigue existiendo y se puede revertir. Una cuenta tampoco: se da de baja, y sus eventos y fotos quedan.
+- Nada se borra: una foto rechazada sigue existiendo y se puede revertir. Una cuenta tampoco: se da de baja, y sus eventos y fotos quedan. **Única excepción:** un superadmin puede eliminar una cuenta para siempre (*Eliminar una cuenta para siempre*, en la sección 5). Se borra sólo su fila de `usuarios`; sus eventos pasan al superadmin y `fotos.moderada_por` queda en `NULL`. No hace falta migración: ninguna clave foránea cambia.
 - `usuarios` empezó llamándose `administradores`; la migración `0003_usuarios_y_roles` la renombró, le agregó `rol` y `estado`, y pasó `eventos.admin_id` a `usuario_id`. Las cuentas que ya existían quedaron `admin` y `activa`.
 - La migración `0004_superadmin` sólo amplía el `CHECK` de `rol` con `superadmin`. No promueve a nadie: el superadmin se nombra a mano (ver *Nombrar un superadmin* en la sección 5). Su downgrade vuelve a `admin` a los superadmin antes de restaurar el `CHECK` viejo.
 - La migración `0005_fotos_borradas` agrega `eventos.fotos_borradas_en` (`timestamptz`, nula). No borra nada: de Cloudinary se encarga la limpieza en segundo plano (*Borrado automático a los 30 días*, en la sección 5). Su downgrade sólo saca la columna; lo que ya se borró en Cloudinary no vuelve.
@@ -245,7 +245,7 @@ Base: `/api`. Todo JSON. Todos los errores tienen la misma forma:
 
 `EVENTO_NO_ENCONTRADO` · `EVENTO_CERRADO` · `EVENTO_BORRADOR` · `FOTO_NO_ENCONTRADA` · `ARCHIVO_INVALIDO` · `PUBLIC_ID_AJENO` · `LIMITE_ALCANZADO` · `DEMASIADOS_PEDIDOS` · `NO_AUTORIZADO` · `DATOS_INVALIDOS`
 
-`NO_AUTORIZADO` sale con **401** cuando falta la sesión o no sirve, y con **403** cuando la sesión es válida pero no alcanza: una cuenta de baja en el login (con la contraseña correcta), un organizador en algo que es sólo de admin, o un admin sobre la cuenta de otro admin o de un superadmin. El panel usa el código HTTP para distinguirlos.
+`NO_AUTORIZADO` sale con **401** cuando falta la sesión o no sirve, y con **403** cuando la sesión es válida pero no alcanza: una cuenta de baja en el login (con la contraseña correcta), un organizador en algo que es sólo de admin, un admin sobre la cuenta de otro admin o de un superadmin, alguien que no es superadmin al eliminar una cuenta, o un superadmin al eliminar a otro superadmin. El panel usa el código HTTP para distinguirlos.
 
 ### Públicos — los usa el celular del invitado
 
@@ -341,6 +341,7 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 | `GET /api/admin/eventos/{id}/video` | — | `{estado: ninguno\|procesando\|listo\|fallo, url, fotos, pedido_en}`. Mientras está `procesando` le pregunta a Cloudinary; a los 30 min sin terminar pasa a `fallo`. Desde el día del borrado → 410 `DATOS_INVALIDOS` |
 | `GET /api/admin/cuentas` | — admin o superadmin — | lista con `{id, email, nombre, rol, estado, creado_en, eventos, ultimo_evento}`, superadmins incluidos: `eventos` es cuántos tiene y `ultimo_evento` la fecha del más reciente, o `null`. Pendientes primero (las más nuevas arriba), después activas y al final las de baja, cada grupo por nombre |
 | `PATCH /api/admin/cuentas/{id}` | admin o superadmin. `{estado?: activa\|baja, rol?: admin\|organizador, nombre?}`, al menos uno | la cuenta, con la forma del listado. Idempotente. `pendiente` no es un valor aceptado. Quién puede cambiar qué cuenta, en la matriz de abajo. Id inexistente → `DATOS_INVALIDOS` 404 |
+| `DELETE /api/admin/cuentas/{id}` | sólo superadmin. `{confirmar_email}`: el email de la cuenta, escrito a mano. Va en el cuerpo, nunca en la URL | 200 `{eventos_transferidos: N}`. Elimina la cuenta para siempre y sus eventos pasan a quien la elimina: la única excepción a *nada se borra* (*Eliminar una cuenta para siempre*, abajo). Admin u organizador → 403 `NO_AUTORIZADO` "No tenés permiso para esto". Una cuenta superadmin → 403 `NO_AUTORIZADO` "A una cuenta superadmin no se la elimina desde el panel". La propia → 422 `DATOS_INVALIDOS` "No podés eliminar tu propia cuenta". `confirmar_email` distinto del email de la cuenta (sin distinguir mayúsculas y sin espacios alrededor) → 422 `DATOS_INVALIDOS` "El email no coincide con el de la cuenta". Id inexistente → 404 `DATOS_INVALIDOS` "No encontramos esa cuenta". Cuerpo mal formado → 422 `DATOS_INVALIDOS`. En cada rechazo la base queda como estaba |
 | `GET /api/salud` | — sin auth — | `{estado, base}` |
 
 **Reglas de negocio**
@@ -355,7 +356,7 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 - El endpoint de firma tiene dos topes de pedidos, cada 10 minutos y por evento: 30 por celular (IP + `dispositivo_hash`) y 600 por conexión (IP). Ver `POST /api/e/{codigo_publico}/firma`. El registro de fotos lleva los mismos dos, aparte.
 - **La IP de los topes** sale de una sola función, `ratelimit.ip_del_pedido`, y **nunca es el primer valor de `X-Forwarded-For`**: ése lo escribe quien manda el pedido, y con uno inventado por pedido se evadían todos los topes (el canje de seis dígitos se podía probar por fuerza bruta). En orden: `CF-Connecting-IP` (lo pone Cloudflare, que está delante de Render, y pisa el del cliente); si no viene, el **último** valor de `X-Forwarded-For` (lo agrega el proxy); si tampoco, la IP de la conexión. El primer pedido de cada arranque deja una línea en el log con qué cabeceras llegaron (sin las IPs): después del primer deploy, y de cualquier cambio de infraestructura, confirmar ahí que dice `cf-connecting-ip=sí`.
 - **Roles.** Tres: `superadmin`, `admin` y `organizador`. `superadmin` es la dueña de la app: puede todo lo que puede un admin y además gestiona a los admins. `admin` ve y gestiona todos los eventos, ve todas las cuentas y gestiona las de organizador. `organizador` ve sólo sus eventos. Para todo lo que no son cuentas, un superadmin es un admin más. Un evento o una foto de otra cuenta responden 404 (`EVENTO_NO_ENCONTRADO`, `FOTO_NO_ENCONTRADA`), igual que si no existieran: un 403 confirmaría que existen. Un organizador en un endpoint sólo de admin recibe 403 `NO_AUTORIZADO`.
-- **Cuentas.** Se crean solas desde el registro, como `organizador` y `pendiente`. Ningún admin crea cuentas con contraseña ni conoce contraseñas ajenas. Dar de baja reemplaza a borrar: la cuenta no entra, pero sus eventos y fotos quedan, los admins los siguen viendo y se puede reactivar.
+- **Cuentas.** Se crean solas desde el registro, como `organizador` y `pendiente`. Ningún admin crea cuentas con contraseña ni conoce contraseñas ajenas. Dar de baja reemplaza a borrar: la cuenta no entra, pero sus eventos y fotos quedan, los admins los siguen viendo y se puede reactivar. La única excepción es *Eliminar una cuenta para siempre* (abajo), sólo para superadmins.
 - La sesión se valida contra la base en cada pedido: una baja corta en el acto los tokens ya emitidos, y un cambio de rol vale desde el pedido siguiente.
 - **Nadie cambia su propio rol ni su propio estado.** Así el sistema nunca se queda sin admins y nadie se bloquea solo. El nombre propio sí.
 - **El rol `superadmin` no se asigna desde el panel**, ni siquiera un superadmin a otra cuenta: se nombra a mano en la base (abajo).
@@ -372,6 +373,26 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 | Cualquier cuenta con `rol: superadmin` en el body | 422 `DATOS_INVALIDOS` "El rol superadmin no se asigna desde el panel" | lo mismo |
 
 Los admins también pueden crear admins: fue una elección de la usuaria. Deshacerlo, en cambio, queda para un superadmin.
+
+**Eliminar una cuenta para siempre** (`DELETE /api/admin/cuentas/{id}`). Decisión de la usuaria del 26-sep-2026. Es la **única excepción a la regla 7** (*nada se borra*) y es sólo para superadmins. Para sacar a alguien, lo normal sigue siendo darlo de baja.
+
+- **Qué se borra:** la fila de `usuarios` y nada más: el nombre, el email y la contraseña.
+- **Qué pasa con lo suyo:** sus eventos, con sus fotos y sus videos, pasan a la cuenta del superadmin que la elimina (`eventos.usuario_id` = el id del superadmin). En `fotos.moderada_por`, lo que moderó esa cuenta queda en `NULL`; el estado y `moderada_en` de esas fotos no cambian. Las claves públicas no cambian: los invitados y la pantalla no se enteran.
+- **Una sola transacción:** mover los eventos, soltar lo moderado y borrar la fila pasan juntos o no pasa nada. La fila se toma con `FOR UPDATE` antes de mirar nada: un evento nuevo para esa cuenta, o una foto que modera en ese momento, espera a que termine, y no queda una referencia colgada que haga fallar el borrado.
+- **Confirmación del lado del servidor:** el cuerpo trae `confirmar_email`, que tiene que ser el email de la cuenta, sin distinguir mayúsculas y sin espacios alrededor. El panel también lo pide, pero el servidor no confía en eso. Va en el cuerpo y no en la URL para que el email no quede en ningún log de acceso.
+- **Primero el permiso, después el email:** a quien no puede eliminar esa cuenta no se le dice si el email coincidía. Un admin o un organizador reciben 403 aunque el cuerpo falte.
+- **Después:** el token de la cuenta eliminada deja de servir en el acto (401: la sesión se valida contra la base en cada pedido). Su login responde lo mismo que un email que nunca existió. El email queda libre para registrarse de nuevo: es una cuenta nueva, `pendiente` y sin eventos. El id no se reusa (`IDENTITY`), así que un token viejo nunca apunta a la cuenta nueva.
+- **Log:** una línea a nivel INFO que empieza con `cuentas:`, con el id del superadmin, el de la cuenta eliminada y cuántos eventos pasaron. Sin emails ni nombres.
+
+**Quién puede eliminar a quién** (actor = quien pide, objetivo = la cuenta):
+
+| Objetivo | Actor organizador o admin | Actor superadmin |
+|---|---|---|
+| Organizador, en cualquier estado (`pendiente`, `activa`, `baja`) | 403 `NO_AUTORIZADO` "No tenés permiso para esto" | se puede |
+| Admin, activo o de baja | 403 `NO_AUTORIZADO` | se puede |
+| Otro superadmin | 403 `NO_AUTORIZADO` | 403 `NO_AUTORIZADO` "A una cuenta superadmin no se la elimina desde el panel" |
+| La propia cuenta | 403 `NO_AUTORIZADO` | 422 `DATOS_INVALIDOS` "No podés eliminar tu propia cuenta" |
+| Una cuenta que no existe | 403 `NO_AUTORIZADO` | 404 `DATOS_INVALIDOS` "No encontramos esa cuenta" |
 
 **Nombrar un superadmin.** No hay endpoint ni botón para esto, a propósito. Se hace a mano en el SQL Editor de Supabase (o con `psql` en desarrollo), sobre una cuenta que ya existe:
 
@@ -552,6 +573,8 @@ Verbos unificados en todo el panel: *Descargar* (nunca Bajar), *Crear* (nunca Ar
 
 Quien quiere usar la app pide su cuenta en `/admin/registro` y espera a que un admin la habilite. Un **organizador** ve sólo sus eventos; un **admin** ve todos, con el nombre de su organizador, y además la pestaña **Cuentas**: habilitar (también *Habilitar como admin*), dar de baja, reactivar, renombrar y hacer admin a los organizadores. La **superadmin** es la dueña de la app: todo lo del admin y además gestiona a los admins (pasarlos a organizador, darlos de baja, reactivarlos). Nadie puede cambiar su propio rol ni su estado, y a la superadmin no la toca nadie desde el panel. En Cuentas, cada uno ve sólo las acciones que el backend le permite (la matriz de la sección 5); sobre una cuenta que no puede tocar, una línea tenue explica por qué.
 
+Sólo la superadmin ve **Eliminar definitivamente**, en rojo, en las cuentas que puede eliminar (ni la propia ni otra superadmin). Va separada de las demás acciones, para que no se toque por error con el pulgar. El diálogo dice en frases cortas que no se puede deshacer, que se borran el nombre, el email y la contraseña, y que sus N eventos (con fotos y videos) pasan a tu cuenta; pide escribir el email de la cuenta y no deja confirmar hasta que coincide. Después, la cuenta sale de la lista y un aviso dice *Cuenta eliminada. Sus N eventos pasaron a tu cuenta.* (o *Cuenta eliminada.* si no tenía ninguno).
+
 ### Alta de evento
 
 Nombre y fecha, nada más (un admin puede elegir además para qué cuenta es). La fecha no puede ser de hace 30 días o más (sus fotos ya estarían vencidas): el selector no la ofrece y, si se tipea igual, el aviso dice *Esa fecha ya pasó hace 30 días o más. Revisá el año*. Al crearlo, la pantalla muestra lo que se necesita de verdad: el botón grande **Publicar**, con el aviso de que el QR no funciona hasta publicarlo; el **QR descargable en PNG** para imprimir y poner en las mesas, y **Conectar la pantalla** con tres opciones explicadas: *En esta compu* (abre la ventana), *En una tele* (código de seis dígitos) y *En otra compu* (copiar el link).
@@ -724,7 +747,9 @@ Deploy: Render.
    `eventos/{codigo_publico}/`. Sin esto se puede proyectar cualquier imagen.
 5. Todas las marcas de tiempo son `timestamptz`. Nunca `timestamp` pelado.
 6. Estados como `text` + `CHECK`, no ENUM.
-7. Nada se borra. Rechazar es un estado, no un DELETE.
+7. Nada se borra. Rechazar es un estado, no un DELETE. Única excepción:
+   un superadmin elimina una cuenta (`DELETE /api/admin/cuentas/{id}`, sección 5);
+   se borra sólo su fila de `usuarios` y sus eventos pasan a él.
 8. Moderar es idempotente.
 9. No inventar endpoints fuera del contrato de CONSTRUIR-APP.md.
    Si hace falta uno nuevo, proponerlo antes de escribirlo.

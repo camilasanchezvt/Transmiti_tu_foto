@@ -5,7 +5,9 @@ Convenciones de la sección 4 de CONSTRUIR-APP.md:
   servidor está en UTC y el evento en Argentina.
 - Los estados son text con CHECK, no tipos ENUM.
 - Nada se borra: una foto rechazada sigue existiendo y se puede revertir. Una
-  cuenta tampoco se borra: se da de baja, y sus eventos y fotos quedan.
+  cuenta tampoco se borra: se da de baja, y sus eventos y fotos quedan. La
+  única excepción: un superadmin puede eliminar una cuenta para siempre, y sus
+  eventos pasan a él (DELETE /api/admin/cuentas/{id}, routers/cuentas.py).
 """
 
 from __future__ import annotations
@@ -49,6 +51,11 @@ class Usuario(Base):
     Las cuentas se crean desde el registro público y nacen `pendiente`: no
     entran hasta que un admin las pasa a `activa`. Dar de baja es un estado, no
     un DELETE: los eventos y las fotos de la cuenta quedan.
+
+    Eliminar para siempre existe sólo para un superadmin, y nunca sobre otro
+    superadmin ni sobre la propia cuenta. Se borra esta fila y nada más: sus
+    eventos pasan al superadmin que la elimina y `fotos.moderada_por` queda en
+    NULL donde la nombraba.
     """
 
     __tablename__ = "usuarios"

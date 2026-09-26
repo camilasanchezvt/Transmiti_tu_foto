@@ -191,6 +191,22 @@ export interface CambioCuenta {
   nombre?: string;
 }
 
+/** Cuerpo de DELETE /api/admin/cuentas/{id}: la única excepción a "nada se
+ *  borra", y sólo para una superadmin. El email va en el cuerpo y no en la
+ *  URL; tiene que coincidir con el de la cuenta (sin distinguir mayúsculas ni
+ *  espacios alrededor) o el backend responde 422 y no borra nada. Ni una
+ *  superadmin ni la propia cuenta se eliminan. */
+export interface PedidoEliminarCuenta {
+  confirmar_email: string;
+}
+
+/** Respuesta de DELETE /api/admin/cuentas/{id}. Se borra sólo la fila de la
+ *  cuenta (nombre, email y contraseña); sus eventos, con fotos y videos, pasan
+ *  a la superadmin que la eliminó. Esto dice cuántos pasaron. */
+export interface CuentaEliminada {
+  eventos_transferidos: number;
+}
+
 /** POST /api/cuentas/registro (público) */
 export interface PedidoRegistro {
   email: string;

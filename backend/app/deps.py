@@ -7,7 +7,8 @@ eventos simultáneos: ninguna consulta se hace por el id interno.
 Del lado del panel, `usuario_actual` dice quién pide y `evento_del_usuario`
 acota por dueño: un admin llega a cualquier evento, un organizador sólo a los
 suyos. Para todo lo que no son cuentas, un superadmin es un admin más: la única
-diferencia está en routers/cuentas.py, donde además gestiona a los admins.
+diferencia está en routers/cuentas.py, donde además gestiona a los admins y es
+el único que elimina una cuenta para siempre (`solo_superadmin`).
 """
 
 from __future__ import annotations
@@ -56,10 +57,22 @@ def es_superadmin(usuario: Usuario) -> bool:
     return usuario.rol == "superadmin"
 
 
+_SIN_PERMISO = "No tenés permiso para esto"
+
+
 def solo_admin(usuario: Usuario = Depends(usuario_actual)) -> Usuario:
     """Admin o superadmin. 403 y no 401: la sesión es válida, lo que falta es permiso."""
     if not es_admin(usuario):
-        raise ErrorApp(Codigo.NO_AUTORIZADO, "No tenés permiso para esto", http=403)
+        raise ErrorApp(Codigo.NO_AUTORIZADO, _SIN_PERMISO, http=403)
+    return usuario
+
+
+def solo_superadmin(usuario: Usuario = Depends(usuario_actual)) -> Usuario:
+    """Sólo superadmin. Lo usa lo único que un admin no puede hacer: eliminar
+    una cuenta para siempre (routers/cuentas.py). Mismo 403 y mismo mensaje que
+    `solo_admin`: para quien no llega, da igual qué rol le faltó."""
+    if not es_superadmin(usuario):
+        raise ErrorApp(Codigo.NO_AUTORIZADO, _SIN_PERMISO, http=403)
     return usuario
 
 

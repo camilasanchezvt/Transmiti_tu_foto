@@ -7,6 +7,8 @@
 -- desde el panel. `admin` ve todo y gestiona organizadores; `organizador`, sólo
 -- sus eventos. Se crean desde el registro público y nacen `pendiente`: no
 -- entran hasta que un admin las habilita. Dar de baja es un estado, no un DELETE.
+-- Única excepción: un superadmin puede eliminar una cuenta para siempre. Se
+-- borra sólo su fila; sus eventos pasan a él y fotos.moderada_por queda en NULL.
 CREATE TABLE usuarios (
   id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   email         text NOT NULL UNIQUE,

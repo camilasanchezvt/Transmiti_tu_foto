@@ -401,6 +401,28 @@ class CambioCuenta(BaseModel):
         return self
 
 
+class PedidoEliminarCuenta(BaseModel):
+    """Cuerpo de DELETE /api/admin/cuentas/{id}. Sólo superadmin.
+
+    `confirmar_email` es el email de la cuenta, escrito a mano: la confirmación
+    se hace también del lado del servidor, no sólo en el diálogo del panel. Se
+    compara sin mayúsculas y sin los espacios de alrededor. Va en el cuerpo y no
+    en la URL, para que un email no quede en los logs de acceso.
+
+    No se valida el formato: cualquier cosa que no sea el email de la cuenta
+    responde "El email no coincide con el de la cuenta", también un texto vacío.
+    """
+
+    confirmar_email: str = Field(max_length=254, examples=["bruno@transmitifoto.test"])
+
+
+class CuentaEliminada(BaseModel):
+    """Respuesta 200 de DELETE /api/admin/cuentas/{id}: cuántos eventos de la
+    cuenta eliminada pasaron a la cuenta del superadmin que la eliminó."""
+
+    eventos_transferidos: int = Field(examples=[3])
+
+
 # ─────────────────────────────────────────────────────────────
 # Vinculación de pantalla por código corto
 # ─────────────────────────────────────────────────────────────

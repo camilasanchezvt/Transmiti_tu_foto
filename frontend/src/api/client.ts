@@ -10,6 +10,7 @@ import type {
   CodigoError,
   CodigoVinculacion,
   Cuenta,
+  CuentaEliminada,
   EventoAdmin,
   CambioEvento,
   EventoNuevo,
@@ -23,6 +24,7 @@ import type {
   FotoRegistrada,
   ListaFotosAdmin,
   Pantalla,
+  PedidoEliminarCuenta,
   PedidoLogin,
   PedidoRegistro,
   RespuestaRegistro,
@@ -108,7 +110,7 @@ export function tokenDeSesion(): string | null {
 }
 
 interface Opciones {
-  metodo?: "GET" | "POST" | "PATCH";
+  metodo?: "GET" | "POST" | "PATCH" | "DELETE";
   cuerpo?: unknown;
   conAuth?: boolean;
   senal?: AbortSignal;
@@ -252,6 +254,17 @@ export const admin = {
     pedir<Cuenta>(`/api/admin/cuentas/${id}`, {
       metodo: "PATCH",
       cuerpo: cambio,
+      conAuth: true,
+    }),
+
+  /** Borra la cuenta para siempre (nombre, email y contraseña). Sólo una
+   *  superadmin; sus eventos, con fotos y videos, pasan a quien la elimina.
+   *  `confirmar_email` tiene que ser el email de la cuenta: va en el cuerpo,
+   *  nunca en la URL. */
+  eliminarCuenta: (id: number, confirmar_email: string) =>
+    pedir<CuentaEliminada>(`/api/admin/cuentas/${id}`, {
+      metodo: "DELETE",
+      cuerpo: { confirmar_email } satisfies PedidoEliminarCuenta,
       conAuth: true,
     }),
 

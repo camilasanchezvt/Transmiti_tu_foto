@@ -13,15 +13,16 @@ import {
   NoSymbolIcon,
   ShieldCheckIcon,
   ShieldExclamationIcon,
+  TrashIcon,
 } from "@heroicons/react/20/solid";
-import { NoSymbolIcon as QuitarAccesoGrande } from "@heroicons/react/24/outline";
+import { NoSymbolIcon as QuitarAccesoGrande, TrashIcon as EliminarGrande } from "@heroicons/react/24/outline";
 import {
   ShieldCheckIcon as DarAdminGrande,
   ShieldExclamationIcon as QuitarAdminGrande,
 } from "@heroicons/react/24/solid";
 
 import { ErrorApi, admin, haySesion } from "../api/client";
-import type { CambioCuenta, Cuenta } from "../api/tipos";
+import type { CambioCuenta, Cuenta, EstadoCuenta } from "../api/tipos";
 import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import { ChipRol } from "../comp/ChipEstado";
@@ -48,6 +49,16 @@ const CAMBIOS: Record<AccionCuenta, CambioCuenta> = {
   reactivar: { estado: "activa" },
 };
 
+/** Lo que puede estar en camino sobre una cuenta: un cambio o eliminarla. */
+type Ocupacion = AccionCuenta | "eliminar";
+
+/** El título de cada sección. Adonde va el foco después de eliminar una cuenta. */
+const ID_SECCION: Record<EstadoCuenta, string> = {
+  pendiente: "cuentas-pendientes",
+  activa: "cuentas-activas",
+  baja: "cuentas-bajas",
+};
+
 /** Habilitar y reactivar van directo: dan acceso, no lo quitan. */
 function pideConfirmacion(accion: AccionCuenta): accion is AccionConfirmada {
   return accion !== "habilitar" && accion !== "reactivar";
@@ -64,9 +75,14 @@ const masNuevaPrimero = (a: Cuenta, b: Cuenta) =>
  * Cuentas: sólo para admins y superadmins.
  *
  * Nadie crea cuentas desde acá. Las personas se registran solas y esperan; un
- * admin las habilita, las rechaza, las hace admin o las da de baja. Nada se
- * borra: una cuenta de baja no entra, pero sus eventos quedan y se puede
- * reactivar.
+ * admin las habilita, las rechaza, las hace admin o las da de baja. Dar de baja
+ * no borra nada: una cuenta de baja no entra, pero sus eventos quedan y se
+ * puede reactivar.
+ *
+ * La única excepción es "Eliminar definitivamente", sólo para una superadmin:
+ * borra el nombre, el email y la contraseña, y sus eventos pasan a la cuenta
+ * de quien elimina. Va al pie de la tarjeta, aparte de las demás acciones, y
+ * se confirma escribiendo el email de la cuenta.
  *
  * Cada tarjeta muestra sólo lo que el backend va a aceptar (la matriz está en
  * `accionesPermitidas`). Sobre una cuenta que no se puede tocar, en vez de
@@ -89,18 +105,29 @@ export default function PaginaCuentas() {
   const [cuentas, setCuentas] = useState<Cuenta[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   /** Las cuentas con un cambio en camino, y cuál. */
-  const [ocupadas, setOcupadas] = useState<Record<number, AccionCuenta>>({});
+  const [ocupadas, setOcupadas] = useState<Record<number, Ocupacion>>({});
   /** El último error de cada tarjeta, tal cual lo mandó el backend. */
   const [fallas, setFallas] = useState<Record<number, string>>({});
   const [preguntando, setPreguntando] = useState<{ cuenta: Cuenta; accion: AccionConfirmada } | null>(
     null,
   );
+  /** La cuenta que se está por eliminar: el diálogo que pide su email. */
+  const [aEliminar, setAEliminar] = useState<Cuenta | null>(null);
   const [aviso, setAviso] = useState<{ texto: string; vez: number } | null>(null);
 
   // Cuenta los cambios hechos desde esta página. Una recarga de fondo que
   // salió antes de un cambio y llega después traería la lista vieja: si el
   // número se movió mientras esperaba, se descarta.
   const cambios = useRef(0);
+
+  // Al eliminar, la tarjeta sale y la lista se corre hacia arriba: un segundo
+  // toque en "Eliminar definitivamente" del diálogo caería sobre la tarjeta
+  // que quedó debajo del dedo. Medio segundo después de cerrar, ese botón no
+  // responde.
+  const cerradoEn = useRef(0);
+  // El botón que abrió el diálogo ya no existe: el foco va al título de la
+  // sección donde estaba la cuenta, y no se pierde en <body>.
+  const enfocarTras = useRef<string | null>(null);
 
   // Si /yo falló (sin red) y después la lista llega bien, la API volvió: se
   // pregunta de nuevo quién es. Por ref para no rehacer `cargar` en cada render.
@@ -150,6 +177,16 @@ export default function PaginaCuentas() {
     return () => document.removeEventListener("visibilitychange", alVolver);
   }, [cargar]);
 
+  // Corre después de que el diálogo se desmonta (y de que intenta devolver el
+  // foco a un botón que ya no está). Sin mover la página: sólo el foco.
+  useEffect(() => {
+    if (aEliminar || !enfocarTras.current) return;
+    const destino =
+      document.getElementById(enfocarTras.current) ?? document.getElementById(ID_SECCION.pendiente);
+    enfocarTras.current = null;
+    destino?.focus({ preventScroll: true });
+  }, [aEliminar, cuentas]);
+
   // El aviso de abajo se va solo.
   useEffect(() => {
     if (!aviso) return;
@@ -191,6 +228,40 @@ export default function PaginaCuentas() {
     }
   }
 
+  /** `escrito`: el email tal cual se tipeó en el diálogo. El backend lo
+   *  compara con el de la cuenta y, si no coincide, no borra nada. */
+  async function eliminar(cuenta: Cuenta, escrito: string) {
+    cambios.current += 1;
+    setOcupadas((o) => ({ ...o, [cuenta.id]: "eliminar" }));
+    setFallas((f) => sinClave(f, cuenta.id));
+    try {
+      const { eventos_transferidos } = await admin.eliminarCuenta(cuenta.id, escrito);
+      cambios.current += 1;
+      enfocarTras.current = ID_SECCION[cuenta.estado];
+      setCuentas((lista) => lista && lista.filter((c) => c.id !== cuenta.id));
+      setAviso({ texto: t.eliminar.hecho(eventos_transferidos), vez: Date.now() });
+      // Sus eventos pasaron a la cuenta propia: que su tarjeta los cuente.
+      if (eventos_transferidos > 0) void cargar(true);
+    } catch (e) {
+      if (alPerderSesion(e)) return;
+      // Sólo se ofrece a una superadmin: un 403 es que cambió quién mira.
+      if (e instanceof ErrorApi && e.esSinPermiso) revalidarSesion();
+      setFallas((f) => ({
+        ...f,
+        [cuenta.id]: e instanceof ErrorApi ? e.message : comun.errores.generico,
+      }));
+    } finally {
+      cerradoEn.current = Date.now();
+      setOcupadas((o) => sinClave(o, cuenta.id));
+      setAEliminar((c) => (c?.id === cuenta.id ? null : c));
+    }
+  }
+
+  function abrirEliminar(cuenta: Cuenta) {
+    if (Date.now() - cerradoEn.current < 500) return;
+    setAEliminar(cuenta);
+  }
+
   function pedir(cuenta: Cuenta, accion: AccionCuenta) {
     if (pideConfirmacion(accion)) setPreguntando({ cuenta, accion });
     else void aplicar(cuenta, accion);
@@ -227,13 +298,18 @@ export default function PaginaCuentas() {
         ocupada={ocupadas[cuenta.id] ?? null}
         falla={fallas[cuenta.id]}
         onAccion={(accion) => pedir(cuenta, accion)}
+        onEliminar={
+          sePuedeEliminar(cuenta, cuenta.id === usuario?.id, esSuperadmin)
+            ? () => abrirEliminar(cuenta)
+            : undefined
+        }
       />
     );
 
     contenido = (
       <div className="flex flex-col gap-10">
-        <section aria-labelledby="cuentas-pendientes">
-          <Encabezado id="cuentas-pendientes" titulo={t.pendientes.titulo}>
+        <section aria-labelledby={ID_SECCION.pendiente}>
+          <Encabezado id={ID_SECCION.pendiente} titulo={t.pendientes.titulo}>
             {grupos.pendientes.length > 0 && (
               <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-naranja/15 px-2 text-sm font-semibold tabular-nums text-naranja">
                 {grupos.pendientes.length}
@@ -253,8 +329,8 @@ export default function PaginaCuentas() {
         </section>
 
         {grupos.activas.length > 0 && (
-          <section aria-labelledby="cuentas-activas">
-            <Encabezado id="cuentas-activas" titulo={t.activas.titulo}>
+          <section aria-labelledby={ID_SECCION.activa}>
+            <Encabezado id={ID_SECCION.activa} titulo={t.activas.titulo}>
               <span className="text-base font-normal tabular-nums text-tenue">
                 {grupos.activas.length}
               </span>
@@ -268,6 +344,7 @@ export default function PaginaCuentas() {
           // las que esperan respuesta.
           <details className="group">
             <summary
+              id={ID_SECCION.baja}
               className={
                 "-mx-1 flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-xl px-1 " +
                 "text-xl font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-acento " +
@@ -316,6 +393,27 @@ export default function PaginaCuentas() {
         />
       )}
 
+      {aEliminar && (
+        <Confirmar
+          abierto
+          peligro
+          titulo={t.eliminar.titulo(aEliminar.nombre)}
+          mensaje={
+            <>
+              <p className="font-semibold text-white">{t.eliminar.noSeDeshace}</p>
+              <p className="mt-1">{t.eliminar.seBorra}</p>
+              <p className="mt-1">{t.eliminar.eventos(aEliminar.eventos)}</p>
+            </>
+          }
+          aEscribir={{ texto: aEliminar.email, etiqueta: t.eliminar.etiqueta, teclado: "email" }}
+          textoConfirmar={t.eliminar.confirmar}
+          iconoConfirmar={EliminarGrande}
+          cargando={ocupadas[aEliminar.id] !== undefined}
+          onConfirmar={(escrito) => void eliminar(aEliminar, escrito)}
+          onCancelar={() => setAEliminar(null)}
+        />
+      )}
+
       {/* Aviso de lo que se acaba de hacer. En el celular va por encima de la
           barra de pestañas de abajo. */}
       <div
@@ -346,7 +444,8 @@ function sinClave<T>(registro: Record<number, T>, clave: number): Record<number,
 
 function Encabezado({ id, titulo, children }: { id: string; titulo: string; children?: ReactNode }) {
   return (
-    <h2 id={id} className="flex items-center gap-2 text-xl font-semibold">
+    // tabIndex -1: recibe el foco después de eliminar una cuenta de su sección.
+    <h2 id={id} tabIndex={-1} className="flex items-center gap-2 text-xl font-semibold outline-none">
       {titulo}
       {children}
     </h2>
@@ -377,6 +476,15 @@ function accionesPermitidas(
     return { acciones: [cuenta.rol === "admin" ? "quitarAdmin" : "hacerAdmin", "darBaja"], motivo: null };
   }
   return { acciones: ["reactivar"], motivo: null };
+}
+
+/**
+ * Eliminar definitivamente: sólo una superadmin, y nunca a otra superadmin ni
+ * a sí misma. A los organizadores (pendientes, activos o de baja) y a los
+ * admins, sí. La misma regla que DELETE /api/admin/cuentas/{id}.
+ */
+function sePuedeEliminar(cuenta: Cuenta, propia: boolean, actorEsSuperadmin: boolean): boolean {
+  return actorEsSuperadmin && !propia && cuenta.rol !== "superadmin";
 }
 
 /** El que da acceso de entrada va en azul; los que lo quitan, en rojo. */
@@ -419,9 +527,11 @@ interface PropsTarjeta {
   /** Quien mira es superadmin: además de los organizadores, gestiona a los admins. */
   actorEsSuperadmin: boolean;
   /** El cambio en camino sobre esta cuenta, si hay uno. */
-  ocupada: AccionCuenta | null;
+  ocupada: Ocupacion | null;
   falla?: string;
   onAccion: (accion: AccionCuenta) => void;
+  /** Sólo si quien mira la puede eliminar (ver `sePuedeEliminar`). */
+  onEliminar?: () => void;
 }
 
 /**
@@ -429,7 +539,7 @@ interface PropsTarjeta {
  * debajo. Nada de tablas: en un celular de 375 px una tabla de cuentas
  * desborda o se vuelve ilegible.
  */
-function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAccion }: PropsTarjeta) {
+function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAccion, onEliminar }: PropsTarjeta) {
   const pendiente = cuenta.estado === "pendiente";
 
   const detalle = pendiente
@@ -513,9 +623,36 @@ function TarjetaCuenta({ cuenta, propia, actorEsSuperadmin, ocupada, falla, onAc
           <span className="min-w-0 break-words">{falla}</span>
         </p>
       )}
+
+      {/* Aparte, al pie y después de una línea: es la única acción que no
+          tiene vuelta atrás, y no se tiene que poder tocar yendo a "Dar de
+          baja". Sin fondo ni borde, como el "Eliminar" de los Ajustes de iOS,
+          y a la izquierda, lejos del pulgar derecho. */}
+      {onEliminar && (
+        <div className="mt-4 border-t border-borde pt-3">
+          <button type="button" onClick={onEliminar} disabled={ocupada !== null} className={CLASE_ELIMINAR}>
+            {ocupada === "eliminar" ? (
+              comun.esperar
+            ) : (
+              <>
+                <TrashIcon aria-hidden className={claseIconoChico} />
+                {t.eliminar.accion}
+              </>
+            )}
+          </button>
+        </div>
+      )}
     </li>
   );
 }
+
+/** Rojo, sin fondo ni borde, con los 44 px de alto de todo botón chico. El
+ *  -ml-3 alinea el ícono con el texto de la tarjeta. */
+const CLASE_ELIMINAR =
+  "-ml-3 inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-rojo " +
+  "transition hover:bg-white/10 active:scale-[0.97] " +
+  "disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 " +
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento";
 
 /**
  * Para invitar a alguien: el admin le pasa este link por WhatsApp o por mail y

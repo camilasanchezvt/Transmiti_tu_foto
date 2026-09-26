@@ -19,6 +19,7 @@ import Cargando from "../comp/Cargando";
 import ChipEstado from "../comp/ChipEstado";
 import { claseIconoChico } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
+import { sinArchivos } from "../lib/descargas";
 import { fechaLarga, hoyEnArgentina } from "../lib/fecha";
 import CompartirEvento from "./CompartirEvento";
 import LayoutAdmin from "./LayoutAdmin";
@@ -396,7 +397,11 @@ function TarjetaEvento({
   compartirAbierto: boolean;
   onCambio: AlCambiar;
 }) {
-  const hayPorRevisar = evento.pendientes > 0;
+  // Un evento abierto el día en que se borran sus fotos (fecha + 30) sigue
+  // acá hasta que la limpieza lo cierre, pero ya no hay nada que revisar: el
+  // backend puede borrarlas en cualquier momento. Mismo corte que Historial.
+  const borradas = sinArchivos(evento);
+  const hayPorRevisar = evento.pendientes > 0 && !borradas;
 
   return (
     // scroll-mt: al traerla a la vista por el ancla, que no quede debajo de la
@@ -421,13 +426,15 @@ function TarjetaEvento({
       )}
 
       <div className="mt-4 flex flex-wrap gap-2">
-        <Link
-          to={`/admin/eventos/${evento.id}/revisar`}
-          className={claseBotonChico(hayPorRevisar ? "azul" : "vidrio")}
-        >
-          <PhotoIcon aria-hidden className={claseIconoChico} />
-          {t.tarjeta.revisarFotos(evento.pendientes)}
-        </Link>
+        {!borradas && (
+          <Link
+            to={`/admin/eventos/${evento.id}/revisar`}
+            className={claseBotonChico(hayPorRevisar ? "azul" : "vidrio")}
+          >
+            <PhotoIcon aria-hidden className={claseIconoChico} />
+            {t.tarjeta.revisarFotos(evento.pendientes)}
+          </Link>
+        )}
         <Link to={`/admin/eventos/${evento.id}/ajustes`} className={claseBotonChico("vidrio")}>
           <Cog6ToothIcon aria-hidden className={claseIconoChico} />
           {t.tarjeta.ajustes}

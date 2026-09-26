@@ -286,7 +286,8 @@ cambiar cuentas. Lo que se decidió:
 
 - **Baja en vez de borrar.** Una cuenta no se borra: pasa a `baja`, no entra,
   sus eventos y fotos quedan y un admin la puede reactivar. Es la regla 7
-  llevada a las cuentas.
+  llevada a las cuentas. Desde el 26-sep tiene una excepción, sólo para
+  superadmins: ver *Eliminar una cuenta para siempre*, más abajo.
 - **El registro no revela emails.** Responde siempre `201 {"estado":"pendiente"}`
   y, si el email existe, no toca nada. El hash se calcula antes de mirar si
   existe, para que el tiempo de respuesta tampoco lo delate. Con el mismo
@@ -426,6 +427,68 @@ porqué. Ningún endpoint nuevo: cambian respuestas de los que ya existen.
   que las pruebas que la reemplazan en ese módulo siguen andando.
 - **OJO al desplegar:** la primera pasada después del deploy borra todo evento
   con fecha de hace 30 días o más. No hay período de gracia.
+
+### Eliminar una cuenta para siempre: la única excepción a "nada se borra"
+**Fuera de fase, 26-sep-2026.** Decisión de la usuaria. El contrato está en la
+sección 5 de CONSTRUIR-APP.md (fila de `DELETE /api/admin/cuentas/{id}` y
+*Eliminar una cuenta para siempre*, con la matriz); acá va el porqué. Un
+endpoint nuevo, en `AGREGADOS`. Sin migración: no cambia ninguna tabla.
+
+- **Sólo un superadmin, y nunca sobre un superadmin ni sobre sí mismo.** Dar
+  de baja sigue siendo lo normal para sacar a alguien. Un admin no puede ni
+  sobre un organizador: es la única acción de cuentas que no comparte con el
+  superadmin (dependencia `solo_superadmin`, mismo 403 y mismo mensaje que
+  `solo_admin`). A un superadmin no se lo elimina desde el panel por lo mismo
+  que no se lo cambia: se nombra y se saca a mano en la base. Y la propia
+  cuenta no, con el criterio de siempre: nadie se bloquea solo por un clic.
+- **Qué se borra: sólo la fila de `usuarios`** (nombre, email y contraseña).
+  Para todo lo demás "nada se borra" sigue valiendo: eventos, fotos, videos y
+  estados quedan.
+- **Sus eventos pasan al superadmin que la elimina**, con fotos y videos
+  (`eventos.usuario_id` = el id del superadmin). No quedan huérfanos:
+  `usuario_id` es NOT NULL y cada listado y cada permiso salen del dueño. El
+  superadmin ya los veía como admin; ahora figuran como suyos. Las claves
+  públicas no cambian: invitados y pantalla no se enteran.
+- **`fotos.moderada_por` queda en NULL** donde nombraba a la cuenta. Es una
+  clave foránea sin `ON DELETE`; con NULL la foto conserva su estado y su
+  `moderada_en`, y sólo se pierde quién la moderó, que era un dato de la
+  persona eliminada.
+- **Una sola transacción, con la fila tomada con `FOR UPDATE` primero.** Un
+  evento nuevo para esa cuenta, o una foto que modera en ese momento, necesita
+  `FOR KEY SHARE` sobre la misma fila (clave foránea): espera, y el DELETE
+  nunca choca con una referencia que apareció a mitad de camino. Si algo falla,
+  no queda nada a medias (lo prueba `test_todo_en_una_transaccion`).
+- **Confirmación por email del lado del servidor.** El cuerpo trae
+  `confirmar_email`, que se compara sin mayúsculas y sin espacios alrededor con
+  el email de la cuenta. El diálogo del panel pide lo mismo, pero un pedido a
+  mano o un panel viejo no pueden eliminar la cuenta equivocada por un id mal
+  puesto. En el cuerpo y no en la URL: una URL queda en los logs de acceso.
+  Por eso el DELETE lleva cuerpo, y por eso CORS ahora permite `DELETE`.
+- **El permiso se mira antes que el cuerpo y que el email.** Un admin sin
+  cuerpo recibe 403, no 422: a quien no puede no se le dice qué le falta.
+- **Después:** el token deja de servir en el acto (`usuario_actual` ya da 401
+  si la cuenta no existe) y el login responde igual que un email inexistente.
+  El email queda libre para registrarse otra vez; la cuenta nueva nace
+  `pendiente` y sin eventos. El id es IDENTITY y no se reusa: un token viejo
+  nunca apunta a la cuenta nueva.
+- **El log lleva ids, nunca emails ni nombres.** Una línea INFO que empieza con
+  `cuentas:` (hijo del logger de uvicorn, como `limpieza:`): quién eliminó a
+  quién y cuántos eventos pasaron. Dejar el email en el log sería conservar
+  justo el dato que se acaba de borrar.
+- **En el panel**, sólo la superadmin ve *Eliminar definitivamente*: rojo, sin
+  fondo, al pie de la tarjeta y después de una línea, lejos de *Dar de baja*.
+  El diálogo es `comp/Confirmar` con la prop nueva `aEscribir` (texto a
+  escribir, etiqueta y teclado): foco inicial en el campo, confirmar
+  deshabilitado hasta que lo escrito coincida con `trim().toLowerCase()` (lo
+  mismo que `strip().lower()` del backend), Enter confirma sólo si coincide.
+  Con campo, el diálogo va arriba en el celular para que el teclado no lo
+  tape. Desde 640 px los dos botones van en fila sólo si entran con el texto
+  entero; si no, se apilan. Después de eliminar, el botón de eliminar ignora
+  toques durante 500 ms (la lista se corre y otra tarjeta queda bajo el dedo)
+  y el foco va al título de la sección donde estaba la cuenta.
+- `CLAUDE.md` sigue diciendo "7. Nada se borra." sin la excepción: no es un
+  archivo de este cambio. Hay que agregarle la excepción a mano (la sección 11
+  de CONSTRUIR-APP.md ya tiene el texto).
 
 ---
 

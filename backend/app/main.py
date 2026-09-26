@@ -86,11 +86,14 @@ app = FastAPI(
     lifespan=ciclo_de_vida,
 )
 
+# DELETE lo usa un solo endpoint: eliminar una cuenta para siempre
+# (DELETE /api/admin/cuentas/{id}, sólo superadmin). Sin él en la lista, el
+# navegador corta el pedido en el preflight y el panel no llega a mandarlo.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.origenes_cors,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
