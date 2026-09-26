@@ -126,6 +126,8 @@ export default function PaginaCierre() {
         </div>
       </section>
 
+      <Configuracion evento={evento} onGuardado={setEvento} />
+
       <section className="rounded-2xl border border-borde bg-panel p-5">
         <h2 className="mb-2 text-lg font-semibold">Descargar las fotos</h2>
         <p className="mb-4 text-sm text-tenue">
@@ -149,5 +151,81 @@ export default function PaginaCierre() {
 
       {error ? <div className="mt-6"><MensajeError error={error} /></div> : null}
     </main>
+  );
+}
+
+/** Los topes son los mismos que valida el backend (CambioEstadoEvento). */
+const SEGUNDOS = { min: 3, max: 30 };
+const CUPO = { min: 1, max: 50 };
+
+function Configuracion({ evento, onGuardado }: { evento: EventoAdmin; onGuardado: (e: EventoAdmin) => void }) {
+  const [segundos, setSegundos] = useState(String(evento.segundos_por_foto));
+  const [cupo, setCupo] = useState(String(evento.max_fotos_por_dispositivo));
+  const [guardando, setGuardando] = useState(false);
+  const [guardado, setGuardado] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const s = Number(segundos);
+  const c = Number(cupo);
+  const valido =
+    Number.isInteger(s) && s >= SEGUNDOS.min && s <= SEGUNDOS.max &&
+    Number.isInteger(c) && c >= CUPO.min && c <= CUPO.max;
+  const cambio = s !== evento.segundos_por_foto || c !== evento.max_fotos_por_dispositivo;
+
+  async function guardar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!valido || !cambio) return;
+    setGuardando(true);
+    setError(null);
+    try {
+      onGuardado(
+        await admin.configurarEvento(evento.id, { segundos_por_foto: s, max_fotos_por_dispositivo: c }),
+      );
+      setGuardado(true);
+      window.setTimeout(() => setGuardado(false), 2000);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  const campo =
+    "mt-1 h-12 w-28 rounded-xl border border-borde bg-fondo px-3 text-base text-white outline-none focus:border-acento";
+
+  return (
+    <form onSubmit={guardar} className="mb-8 rounded-2xl border border-borde bg-panel p-5">
+      <h2 className="mb-2 text-lg font-semibold">Configuración</h2>
+      <p className="mb-4 text-sm text-tenue">
+        La pantalla toma los segundos nuevos sola, en unos segundos, sin recargarla.
+      </p>
+      <div className="flex flex-wrap items-end gap-4">
+        <label className="text-sm text-tenue">
+          Segundos por foto
+          <input
+            type="number" inputMode="numeric" min={SEGUNDOS.min} max={SEGUNDOS.max}
+            value={segundos} onChange={(e) => setSegundos(e.target.value)} className={`block ${campo}`}
+          />
+        </label>
+        <label className="text-sm text-tenue">
+          Fotos por invitado
+          <input
+            type="number" inputMode="numeric" min={CUPO.min} max={CUPO.max}
+            value={cupo} onChange={(e) => setCupo(e.target.value)} className={`block ${campo}`}
+          />
+        </label>
+        <div className="w-36">
+          <Boton type="submit" variante="secundario" cargando={guardando} disabled={!valido || !cambio}>
+            {guardado ? "Guardado" : "Guardar"}
+          </Boton>
+        </div>
+      </div>
+      {!valido && (
+        <p className="mt-3 text-sm text-acento">
+          Entre {SEGUNDOS.min} y {SEGUNDOS.max} segundos, y entre {CUPO.min} y {CUPO.max} fotos por invitado.
+        </p>
+      )}
+      {error ? <div className="mt-4"><MensajeError error={error} /></div> : null}
+    </form>
   );
 }

@@ -9,6 +9,7 @@ import type {
   CodigoError,
   CodigoVinculacion,
   EventoAdmin,
+  CambioEvento,
   EventoNuevo,
   EventoPublico,
   EstadoEvento,
@@ -219,6 +220,13 @@ export const admin = {
     pedir<EventoAdmin>(`/api/admin/eventos/${id}`, {
       metodo: "PATCH",
       cuerpo: { estado },
+      conAuth: true,
+    }),
+
+  configurarEvento: (id: number, cambio: CambioEvento) =>
+    pedir<EventoAdmin>(`/api/admin/eventos/${id}`, {
+      metodo: "PATCH",
+      cuerpo: cambio,
       conAuth: true,
     }),
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 EstadoEvento = Literal["borrador", "activo", "cerrado"]
 EstadoFoto = Literal["pendiente", "aprobada", "rechazada"]
@@ -171,9 +171,21 @@ class EventoNuevo(BaseModel):
 
 
 class CambioEstadoEvento(BaseModel):
-    """Cuerpo de PATCH /api/admin/eventos/{id}"""
+    """Cuerpo de PATCH /api/admin/eventos/{id}. Cualquier combinación, al menos uno.
 
-    estado: EstadoEvento
+    Los topes cuidan la pantalla y el cupo: menos de 3 s por foto no se llega a
+    ver en un proyector, y más de 50 fotos por invitado deja de ser un límite.
+    """
+
+    estado: EstadoEvento | None = None
+    segundos_por_foto: int | None = Field(default=None, ge=3, le=30)
+    max_fotos_por_dispositivo: int | None = Field(default=None, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def _algo_para_cambiar(self) -> "CambioEstadoEvento":
+        if self.estado is None and self.segundos_por_foto is None and self.max_fotos_por_dispositivo is None:
+            raise ValueError("Mandá al menos un campo para cambiar")
+        return self
 
 
 class EventoAdmin(BaseModel):
@@ -185,6 +197,8 @@ class EventoAdmin(BaseModel):
     estado: EstadoEvento
     codigo_publico: str
     token_pantalla: str
+    segundos_por_foto: int
+    max_fotos_por_dispositivo: int
     pendientes: int
     aprobadas: int
     rechazadas: int

@@ -254,6 +254,34 @@ def test_reabrir_borra_la_marca_de_cierre(autorizado, eventos, db):
     assert db.scalar(select(Evento.cerrado_en).where(Evento.id == id_evento)) is None
 
 
+def test_configurar_segundos_y_cupo(autorizado, eventos):
+    id_evento = eventos["activo"].id
+    r = autorizado.patch(
+        f"/api/admin/eventos/{id_evento}",
+        json={"segundos_por_foto": 12, "max_fotos_por_dispositivo": 3},
+    )
+    assert r.status_code == 200
+    assert r.json()["segundos_por_foto"] == 12
+    assert r.json()["max_fotos_por_dispositivo"] == 3
+    assert r.json()["estado"] == "activo", "sin `estado` en el cuerpo, el estado no cambia"
+
+    pantalla = autorizado.get(f"/api/pantalla/{eventos['activo'].token_pantalla}")
+    assert pantalla.json()["config"]["segundos_por_foto"] == 12
+
+    publico = autorizado.get(f"/api/e/{CODIGO_ACTIVO}")
+    assert publico.json()["max_fotos_por_dispositivo"] == 3
+
+
+def test_configuracion_fuera_de_rango_es_rechazada(autorizado, eventos):
+    id_evento = eventos["activo"].id
+    for cuerpo in ({"segundos_por_foto": 2}, {"segundos_por_foto": 31},
+                   {"max_fotos_por_dispositivo": 0}, {"max_fotos_por_dispositivo": 51}, {}):
+        afirmar_error(
+            autorizado.patch(f"/api/admin/eventos/{id_evento}", json=cuerpo),
+            "DATOS_INVALIDOS", 422,
+        )
+
+
 # ─────────────────────────────────────────────────────────────
 # Descarga
 # ─────────────────────────────────────────────────────────────

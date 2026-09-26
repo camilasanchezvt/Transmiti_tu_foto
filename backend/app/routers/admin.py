@@ -109,6 +109,8 @@ def _como_admin(evento: Evento, totales: dict[str, int]) -> EventoAdmin:
         estado=evento.estado,
         codigo_publico=evento.codigo_publico,
         token_pantalla=evento.token_pantalla,
+        segundos_por_foto=evento.segundos_por_foto,
+        max_fotos_por_dispositivo=evento.max_fotos_por_dispositivo,
         **totales,
     )
 
@@ -162,7 +164,7 @@ def crear_evento(
     "/eventos/{id_evento}",
     response_model=EventoAdmin,
     responses={**_ERROR_404_EVENTO},
-    summary="Cambiar el estado de un evento",
+    summary="Cambiar el estado o la configuración de un evento",
 )
 def cambiar_estado_evento(
     id_evento: int,
@@ -170,13 +172,30 @@ def cambiar_estado_evento(
     db: Session = Depends(get_db),
     admin: Administrador = Depends(admin_actual),
 ) -> EventoAdmin:
-    """Cerrar deja de aceptar fotos, pero la pantalla sigue pasando las aprobadas."""
-    evento = evento_del_admin(id_evento, db, admin)
+    """Cerrar deja de aceptar fotos, pero la pantalla sigue pasando las aprobadas.
 
-    if cambio.estado != evento.estado:
+    Los segundos por foto le llegan a la pantalla en su próxima pasada de
+    polling, sin recargarla.
+    """
+    evento = evento_del_admin(id_evento, db, admin)
+    cambio_algo = False
+
+    if cambio.estado is not None and cambio.estado != evento.estado:
         evento.estado = cambio.estado
         # Se sella cuándo se cerró; si se reabre, se borra la marca.
         evento.cerrado_en = datetime.now(timezone.utc) if cambio.estado == "cerrado" else None
+        cambio_algo = True
+    if cambio.segundos_por_foto is not None and cambio.segundos_por_foto != evento.segundos_por_foto:
+        evento.segundos_por_foto = cambio.segundos_por_foto
+        cambio_algo = True
+    if (
+        cambio.max_fotos_por_dispositivo is not None
+        and cambio.max_fotos_por_dispositivo != evento.max_fotos_por_dispositivo
+    ):
+        evento.max_fotos_por_dispositivo = cambio.max_fotos_por_dispositivo
+        cambio_algo = True
+
+    if cambio_algo:
         db.commit()
         db.refresh(evento)
 

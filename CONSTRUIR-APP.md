@@ -264,9 +264,9 @@ Devuelve **sólo fotos aprobadas**. Dos comportamientos:
 | Método y ruta | Body | Respuesta |
 |---|---|---|
 | `POST /api/admin/login` | `{email, password}` | `{token, expira_en}` |
-| `GET /api/admin/eventos` | — | lista con `{id, nombre, fecha_evento, estado, codigo_publico, token_pantalla, pendientes, aprobadas, rechazadas}` |
+| `GET /api/admin/eventos` | — | lista con `{id, nombre, fecha_evento, estado, codigo_publico, token_pantalla, segundos_por_foto, max_fotos_por_dispositivo, pendientes, aprobadas, rechazadas}` |
 | `POST /api/admin/eventos` | `{nombre, fecha_evento}` | el evento creado, con sus dos claves |
-| `PATCH /api/admin/eventos/{id}` | `{estado}` | el evento actualizado |
+| `PATCH /api/admin/eventos/{id}` | `{estado?, segundos_por_foto?, max_fotos_por_dispositivo?}`, al menos uno. Segundos entre 3 y 30; fotos por invitado entre 1 y 50 | el evento actualizado |
 | `GET /api/admin/eventos/{id}/fotos` | query: `estado`, `desde`, `limite` | `{fotos: [...], ultimo_id}` |
 | `GET /api/admin/eventos/{id}/resumen` | — | `{pendientes, aprobadas, rechazadas}` |
 | `PATCH /api/admin/fotos/{id}` | `{estado}` | `{id, estado}` |

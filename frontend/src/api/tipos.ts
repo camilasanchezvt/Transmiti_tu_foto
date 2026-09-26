@@ -94,6 +94,13 @@ export interface Sesion {
   expira_en: string;
 }
 
+/** Cuerpo de PATCH /api/admin/eventos/{id}: cualquier combinación, al menos uno. */
+export interface CambioEvento {
+  estado?: EstadoEvento;
+  segundos_por_foto?: number;
+  max_fotos_por_dispositivo?: number;
+}
+
 export interface EventoNuevo {
   nombre: string;
   fecha_evento: string;
@@ -106,6 +113,8 @@ export interface EventoAdmin {
   estado: EstadoEvento;
   codigo_publico: string;
   token_pantalla: string;
+  segundos_por_foto: number;
+  max_fotos_por_dispositivo: number;
   pendientes: number;
   aprobadas: number;
   rechazadas: number;
