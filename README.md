@@ -207,6 +207,38 @@ El link sirve una vez y vence en una hora; pedir otro anula el anterior.
 Después de elegir la contraseña nueva se cierran todas las sesiones de la
 cuenta y hay que entrar de nuevo.
 
+## Que la API no se duerma (cron-job.org)
+
+Render gratuito duerme la API después de 15 minutos sin pedidos, y el primero
+después tarda cerca de un minuto. Un servicio gratuito externo la mantiene
+despierta visitando el health check cada 10 minutos:
+
+1. **Crear la cuenta** en [cron-job.org](https://cron-job.org). Es gratis.
+2. **Crear un cronjob** (*Create cronjob*):
+   - URL: `{URL de la API}/api/salud`, la misma dirección que tiene
+     `VITE_API_URL` en el static site, más `/api/salud`.
+   - Programación: **cada 10 minutos**.
+   - Método GET, sin cabeceras ni cuerpo: `/api/salud` no pide sesión.
+   - Conviene activar el aviso por email cuando falla: si la API deja de
+     responder, te enterás antes del evento.
+3. **Probar.** El historial del cronjob tiene que mostrar respuestas 200 con
+   `{"estado":"ok","base":"ok"}`. Si dice `"base":"caida"`, la API anda pero
+   Supabase no contesta (¿se pausó?).
+
+Los datos de la cuenta de cron-job.org no van en ningún archivo del repositorio.
+
+Tres cosas a tener en cuenta:
+
+- **Un solo web service despierto por workspace.** Render da 750 horas
+  gratuitas por mes y un servicio despierto todo el mes usa hasta 744. Si en
+  el mismo workspace hay otro web service gratuito que tampoco duerme, las
+  horas se acaban antes de fin de mes y Render suspende los servicios. El
+  static site del panel no cuenta.
+- **La limpieza de los 30 días** pasa cada 6 horas en vez de una vez por
+  arranque.
+- **Igual, abrí la pantalla diez minutos antes del evento.** Un deploy o un
+  reinicio de Render vuelven a arrancar el servicio.
+
 ## Volver al deploy anterior
 
 Render corre `alembic upgrade head` antes de levantar la API. Si el deploy
@@ -305,5 +337,6 @@ Están todas en [CLAUDE.md](CLAUDE.md), pero las que más tiempo hacen perder:
 - **Contraseña de la base con `@ : / # ? %`:** en `DATABASE_URL` va codificada
   (`@` es `%40`, `#` es `%23`, `%` es `%25`). Sin codificar, la URL se lee mal y
   la conexión falla con un error que no hace pensar en la contraseña.
-- **Render gratuito:** el servicio se duerme. Abrir la pantalla diez minutos
-  antes del evento.
+- **Render gratuito:** el servicio se duerme. El ping de cron-job.org lo
+  mantiene despierto (ver *Que la API no se duerma*), pero igual abrí la
+  pantalla diez minutos antes del evento.

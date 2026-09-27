@@ -34,6 +34,12 @@ const CAMPO =
   "mt-1 block h-12 w-full min-w-0 rounded-xl border border-borde bg-hundido px-3 " +
   "text-base text-texto outline-none focus:border-acento";
 
+/** Safari de iPhone y iPad (el iPad se presenta como Mac, pero con pantalla táctil). */
+const ES_IOS =
+  typeof navigator !== "undefined" &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+
 /** Las fotos y el video se borran a los 30 días de la fecha del evento
  *  (backend, limpieza.DIAS_HASTA_BORRAR). */
 const DIAS_HASTA_BORRAR = 30;
@@ -308,19 +314,35 @@ function FormularioCrear({
           {/* min: el selector no deja elegir una fecha que el backend
               rechazaría. Si se tipea igual (el año mal puesto), el aviso del
               navegador dice lo mismo que el backend y no el genérico. */}
-          <input
-            type="date"
-            value={fecha}
-            min={minima}
-            onChange={(e) => {
-              setFecha(e.target.value);
-              e.currentTarget.setCustomValidity(
-                e.target.value && e.target.value < minima ? t.crear.fechaVieja : "",
-              );
-            }}
-            required
-            className={CAMPO}
-          />
+          {/* En Safari de iPhone el campo de fecha trae su propio aspecto: un
+              ancho mínimo que ignora la grilla (se montaba sobre "Para"), el
+              texto centrado y ninguna pista cuando está vacío. appearance-none
+              lo devuelve al tamaño de la celda, el valor va a la izquierda como
+              en los demás campos, y la pista "dd/mm/aaaa" se dibuja aparte sólo
+              ahí (Chrome y Firefox ya muestran la suya). */}
+          <span className="relative mt-1 block">
+            <input
+              type="date"
+              value={fecha}
+              min={minima}
+              onChange={(e) => {
+                setFecha(e.target.value);
+                e.currentTarget.setCustomValidity(
+                  e.target.value && e.target.value < minima ? t.crear.fechaVieja : "",
+                );
+              }}
+              required
+              className={`${CAMPO} !mt-0 appearance-none [&::-webkit-date-and-time-value]:text-left`}
+            />
+            {!fecha && ES_IOS && (
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-tenue"
+              >
+                {t.crear.fechaEjemplo}
+              </span>
+            )}
+          </span>
         </label>
 
         {conPara && (

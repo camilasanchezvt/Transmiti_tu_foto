@@ -41,7 +41,8 @@ const erroresPassword = {
 };
 
 export const acceso = {
-  marca: "Transmití tu foto",
+  // El nombre de la app, arriba de la tarjeta, lo pone la marca
+  // (comp/Marca.tsx) con comun.marca.
 
   campos: {
     nombre: "Tu nombre",
@@ -68,6 +69,11 @@ export const acceso = {
     tituloPestana: "Entrar",
     subtitulo: "Panel para organizar tus eventos",
     boton: "Entrar",
+    /** El botón mientras espera la respuesta, con el círculo que gira. */
+    entrando: "Entrando…",
+    /** Debajo del botón, si la respuesta tarda más de unos segundos: casi
+     *  siempre, la app estaba dormida y se está despertando. */
+    tarda: "Está tardando un poco más. Si hacía rato que nadie entraba, puede llevar hasta un minuto.",
     faltanDatos: "Escribí tu email y tu contraseña",
     sinCuenta: "¿No tenés cuenta?",
     crearCuenta: "Creá una",

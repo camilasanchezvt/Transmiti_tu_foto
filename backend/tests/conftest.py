@@ -50,9 +50,9 @@ PASSWORD_CUENTA = "organiza1234"
 
 @lru_cache(maxsize=None)
 def hash_de(password: str) -> str:
-    """bcrypt tarda un cuarto de segundo a propósito. Hashear en cada prueba
-    sumaba medio minuto a la corrida; la misma contraseña da un hash que valida
-    igual, así que se calcula una vez."""
+    """bcrypt tarda a propósito (unos 70 ms con 10 rondas). Hashear en cada
+    prueba sumaba segundos a la corrida; la misma contraseña da un hash que
+    valida igual, así que se calcula una vez."""
     return hashear_password(password)
 
 

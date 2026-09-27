@@ -16,6 +16,7 @@ import { ErrorApi, admin } from "../api/client";
 import Avatar from "../comp/Avatar";
 import { claseBotonChico } from "../comp/BotonChico";
 import { claseIconoChico, type Icono } from "../comp/icono";
+import Marca from "../comp/Marca";
 import { comun } from "./textos/comun";
 import { cuenta as textosCuenta } from "./textos/cuenta";
 import { olvidarSesion, revalidarSesion, useSesion } from "./useSesion";
@@ -85,12 +86,21 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
     <div className="flex min-h-full flex-col">
       <header className="sticky top-0 z-40 border-b border-borde bg-barra pt-[env(safe-area-inset-top)] backdrop-blur-2xl backdrop-saturate-150">
         <div className="mx-auto flex h-16 max-w-5xl items-center gap-3 px-4 sm:px-6 md:gap-6">
-          {/* min-h-11: también la marca es un objetivo táctil (lleva a Eventos). */}
+          {/* La marca: el símbolo y el nombre (comp/Marca). min-h-11: también
+              es un objetivo táctil, y lleva a Eventos. En un celular de menos
+              de 360 px va sólo el símbolo; el nombre queda para el lector de
+              pantalla y le da nombre al link. Ahí el símbolo (32) y el px-1
+              suman 40: min-w-11 lo lleva a 44. Sin justify-center, a propósito:
+              el -ml-1 con el px-1 deja el símbolo sobre el margen del <main>
+              (px-4), y los 4 px de más quedan como zona táctil a su derecha. */}
           <Link
             to="/admin"
-            className="inline-flex min-h-11 shrink-0 items-center text-base font-semibold tracking-tight sm:text-lg"
+            className={
+              "-ml-1 inline-flex min-h-11 min-w-11 shrink-0 items-center rounded-xl px-1 " +
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento"
+            }
           >
-            {comun.marca}
+            <Marca />
           </Link>
 
           {/* Pestañas arriba, desde md: control segmentado de iOS. Desde sm no:
@@ -120,7 +130,9 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
             {/* Quién está, y el camino a Mi cuenta: como la foto de perfil de
                 arriba a la derecha en las apps de iOS. En el celular, sólo el
                 círculo (el nombre cortado a la mitad no se lee); desde sm,
-                también el nombre. 44 px de alto en los dos. */}
+                también el nombre. Entre md y lg, otra vez sólo el círculo:
+                ahí aparecen las pestañas al lado de la marca, y el nombre
+                quedaba en "Ana …". 44 px de alto siempre. */}
             {usuario && (
               <NavLink
                 to="/admin/cuenta"
@@ -129,6 +141,8 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
                   "group flex min-h-11 min-w-11 items-center justify-center gap-2 rounded-full p-1.5 transition " +
                   "hover:bg-pulsado focus:outline-none focus-visible:ring-2 focus-visible:ring-acento " +
                   "sm:min-w-0 sm:justify-start sm:py-1.5 sm:pl-1.5 sm:pr-3 " +
+                  "md:min-w-11 md:justify-center md:p-1.5 " +
+                  "lg:min-w-0 lg:justify-start lg:py-1.5 lg:pl-1.5 lg:pr-3 " +
                   (isActive ? "text-texto" : "text-tenue hover:text-texto")
                 }
               >
@@ -142,7 +156,9 @@ export default function LayoutAdmin({ titulo, acciones, volver, pendientesCuenta
                       // pestaña elegida.
                       className={isActive ? "ring-2 ring-acento" : ""}
                     />
-                    <span className="sr-only min-w-0 text-sm sm:not-sr-only sm:truncate">{usuario.nombre}</span>
+                    <span className="sr-only min-w-0 text-sm sm:not-sr-only sm:truncate md:sr-only lg:not-sr-only">
+                      {usuario.nombre}
+                    </span>
                     <span className="sr-only">{textosCuenta.enLaBarra}</span>
                   </>
                 )}

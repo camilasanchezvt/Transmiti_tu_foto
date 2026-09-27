@@ -7,6 +7,7 @@ sin pedirles datos.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -18,22 +19,75 @@ from .errores import Codigo, ErrorApp
 
 config = obtener_config()
 
-_contexto = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# El costo de bcrypt: 2^10 vueltas. Es el ÚNICO lugar donde se fija.
+#
+# Hasta el 27-sep-2026 era 12, el que passlib usa si no se le dice nada. En
+# Render gratuito (0,1 de CPU) el login tardaba 1,9 a 3,7 s con el servicio
+# despierto, contra 0,3 s de /api/salud: casi todo era bcrypt. En la máquina
+# de desarrollo, 272 ms con 12 y 68 ms con 10: cada ronda menos divide el
+# tiempo por dos. 10 es el mínimo que recomienda OWASP para bcrypt, y los
+# topes de intentos del login (routers/admin.py) compensan la diferencia.
+#
+# Con el mínimo y el máximo iguales a este valor, passlib considera que un hash
+# con otro costo "necesita actualización": los de 12 que ya están en la base
+# se rehacen con 10 la próxima vez que su cuenta entra (ver el login). Todo lo
+# que hashea pasa por `hashear_password`: registro, restablecer, cambiar la
+# contraseña, crear_admin.py y el hash de relleno del login.
+RONDAS_BCRYPT = 10
+
+_contexto = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__default_rounds=RONDAS_BCRYPT,
+    bcrypt__min_rounds=RONDAS_BCRYPT,
+    bcrypt__max_rounds=RONDAS_BCRYPT,
+)
+
+# passlib 1.7.4 busca la versión de bcrypt en `bcrypt.__about__`, que bcrypt 4
+# ya no tiene, y deja un traceback "(trapped) error reading bcrypt version" en
+# el log con el primer login de cada arranque. Es inofensivo (sigue usando
+# bcrypt igual), pero en los logs de Render parece una falla del login.
+logging.getLogger("passlib.handlers.bcrypt").setLevel(logging.ERROR)
 
 ALGORITMO = "HS256"
 
 
 def hashear_password(password: str) -> str:
+    """bcrypt con RONDAS_BCRYPT."""
     return _contexto.hash(password)
 
 
 def verificar_password(password: str, password_hash: str) -> bool:
+    """Valida también los hashes con otro costo (los de 12 de antes)."""
     try:
         return _contexto.verify(password, password_hash)
     except ValueError:
         # Hash con un formato que passlib no reconoce: no es una excepción del
         # servidor, es simplemente una credencial que no valida.
         return False
+
+
+def hash_desactualizado(password_hash: str) -> bool:
+    """True si el hash no tiene el costo de RONDAS_BCRYPT. No corre bcrypt:
+    lee el costo del propio hash (`$2b$12$…`), así que no tarda nada."""
+    try:
+        return _contexto.needs_update(password_hash)
+    except ValueError:
+        return False
+
+
+def verificar_y_actualizar(password: str, password_hash: str) -> tuple[bool, str | None]:
+    """Como `verificar_password`, y además el hash nuevo que hay que guardar.
+
+    Devuelve `(False, None)` si la contraseña no verifica: nunca hay un hash
+    nuevo sin la contraseña correcta. `(True, None)` si verifica y el hash ya
+    tiene el costo de hoy. `(True, hash_nuevo)` si verifica y el hash tenía
+    otro costo: `hash_nuevo` es la misma contraseña con RONDAS_BCRYPT.
+    """
+    try:
+        return _contexto.verify_and_update(password, password_hash)
+    except ValueError:
+        return False, None
 
 
 def al_milisegundo(momento: datetime) -> datetime:

@@ -17,6 +17,8 @@ export const textosEventos = {
     nombre: "Nombre",
     nombreEjemplo: "Casamiento de Ana y Juan",
     fecha: "Fecha",
+    // Pista del campo vacío en iPhone, donde el navegador no muestra ninguna.
+    fechaEjemplo: "dd/mm/aaaa",
     /** Una fecha de hace 30 días o más: sus fotos ya estarían vencidas. Casi
      *  siempre es el año mal puesto. Mismo texto que el backend. */
     fechaVieja: "Esa fecha ya pasó hace 30 días o más. Revisá el año",

@@ -1,12 +1,21 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
-import { ErrorApi, admin, tokenDeSesion } from "../api/client";
+import { ErrorApi, admin, salud } from "../api/client";
 import Boton from "../comp/Boton";
 import { Aviso, AvisoDeError, Campo, MarcoAcceso, PieAcceso } from "./PiezasAcceso";
 import { acceso } from "./textos/acceso";
 import { comun } from "./textos/comun";
-import { olvidarSesion } from "./useSesion";
+import { comprobarSesion, olvidarSesion } from "./useSesion";
+
+/** Desde cuándo una espera deja de ser normal. Despierta y con bcrypt de 10
+ *  rondas, entrar tarda menos de un segundo; más de cinco es casi siempre la
+ *  app dormida (Render gratuito) despertándose. */
+const ESPERA_LARGA_MS = 5000;
+
+/** Una vez por carga de la página alcanza para despertar la app: ir a Crear
+ *  cuenta y volver no tiene que repetirlo. */
+let yaSeDesperto = false;
 
 /**
  * Entrar al panel. Sin LayoutAdmin: quien llega acá todavía no tiene sesión.
@@ -23,6 +32,20 @@ import { olvidarSesion } from "./useSesion";
  * email que ya estaba escrito, así no hay que escribirlo dos veces. Viaja en
  * el estado del historial y no en la dirección. De vuelta de Olvidé, llega
  * igual y el campo aparece completo.
+ *
+ * Que entrar se sienta rápido:
+ * - Al abrir la página sin sesión, un pedido a /api/salud despierta la app
+ *   mientras se escribe el email y la contraseña (en Render gratuito, el
+ *   primer pedido después de un rato puede tardar cerca de un minuto). Nadie
+ *   espera su respuesta.
+ * - Con un token guardado, la pregunta "¿sigue sirviendo?" va por
+ *   comprobarSesion, que deja la respuesta en el caché de useSesion: si sirve,
+ *   el panel abre sin volver a preguntar lo mismo.
+ * - Después del login se navega en el acto. El panel pide quién es y los
+ *   eventos a la vez, no uno detrás del otro.
+ * - El botón dice "Entrando…" con un círculo que gira, a color pleno: el
+ *   gris de un botón deshabilitado parece que no pasa nada. Si pasan cinco
+ *   segundos, un aviso debajo explica la demora.
  */
 export default function PaginaLogin() {
   const navegar = useNavigate();
@@ -36,6 +59,7 @@ export default function PaginaLogin() {
   // es el mismo que el anterior, un lector de pantalla igual lo anuncia.
   const [intento, setIntento] = useState(0);
   const [enviando, setEnviando] = useState(false);
+  const [tarda, setTarda] = useState(false);
   const refEmail = useRef<HTMLInputElement>(null);
   const refPassword = useRef<HTMLInputElement>(null);
   const refAviso = useRef<HTMLParagraphElement>(null);
@@ -51,9 +75,18 @@ export default function PaginaLogin() {
   // backend y no se mira sólo si hay token: uno vencido o de una cuenta dada
   // de baja mandaría a /admin, y de ahí useSesion lo devolvería acá.
   useEffect(() => {
-    if (!tokenDeSesion()) return;
+    const comprobacion = comprobarSesion();
+    if (!comprobacion) {
+      // Sin sesión: se despierta la app mientras se escribe. Si falla, no
+      // importa; el login dirá lo que pase.
+      if (!yaSeDesperto) {
+        yaSeDesperto = true;
+        salud().catch(() => {});
+      }
+      return;
+    }
     let vivo = true;
-    admin.yo().then(
+    comprobacion.then(
       () => {
         if (vivo && !yaIntentoEntrar.current) navegar("/admin", { replace: true });
       },
@@ -69,6 +102,17 @@ export default function PaginaLogin() {
       vivo = false;
     };
   }, [navegar]);
+
+  // Si la respuesta tarda, se avisa por qué (y que no hace falta tocar de
+  // nuevo). Al llegar, el aviso se va.
+  useEffect(() => {
+    if (!enviando) {
+      setTarda(false);
+      return;
+    }
+    const reloj = window.setTimeout(() => setTarda(true), ESPERA_LARGA_MS);
+    return () => window.clearTimeout(reloj);
+  }, [enviando]);
 
   // Al fallar, el teclado del celular tapa el aviso, que está abajo del
   // último campo. Se cierra el teclado y se lleva el aviso a la vista.
@@ -107,20 +151,16 @@ export default function PaginaLogin() {
   }
 
   return (
-    <MarcoAcceso>
+    // La marca, arriba, es el título de la página: el nombre de la app en el
+    // <h1> y "Panel para organizar tus eventos" debajo.
+    <MarcoAcceso titulo={{ id: idTitulo, subtitulo: acceso.entrar.subtitulo }}>
       <form
         onSubmit={entrar}
         noValidate
         aria-labelledby={idTitulo}
+        aria-busy={enviando || undefined}
         className="flex flex-col gap-4 rounded-3xl border border-borde bg-panel p-5 sm:p-6"
       >
-        <header className="mb-1 flex flex-col gap-1 text-center">
-          <h1 id={idTitulo} className="text-2xl font-semibold tracking-tight">
-            {acceso.marca}
-          </h1>
-          <p className="text-base text-tenue">{acceso.entrar.subtitulo}</p>
-        </header>
-
         <Campo
           etiqueta={acceso.campos.email}
           refCampo={refEmail}
@@ -155,9 +195,28 @@ export default function PaginaLogin() {
         {faltanDatos && <Aviso>{acceso.entrar.faltanDatos}</Aviso>}
         {error != null && <AvisoDeError key={intento} error={error} refAviso={refAviso} />}
 
-        <Boton type="submit" cargando={enviando} className="mt-1">
-          {acceso.entrar.boton}
+        {/* Sin `cargando`: ese deshabilita y lo pone gris, y un botón gris
+            parece que no hace nada. Éste queda a color, dice "Entrando…" y
+            gira; un segundo toque no manda otro pedido (entrar() lo corta). */}
+        <Boton type="submit" aria-disabled={enviando || undefined} className="mt-1">
+          {enviando ? (
+            <>
+              <Girando />
+              {acceso.entrar.entrando}
+            </>
+          ) : (
+            acceso.entrar.boton
+          )}
         </Boton>
+
+        {/* Siempre montado, para que el lector de pantalla anuncie el aviso
+            cuando aparece. Vacío va sr-only: es absolute y no suma el gap. */}
+        <p
+          aria-live="polite"
+          className={tarda ? "text-balance text-center text-sm leading-snug text-tenue" : "sr-only"}
+        >
+          {tarda && acceso.entrar.tarda}
+        </p>
 
         {/* El link mide 44 px pero la letra 24: el -my-2 le saca el aire de
             más para que no quede lejos del botón ni del borde. */}
@@ -182,4 +241,15 @@ export default function PaginaLogin() {
 function emailRecibido(estado: unknown): string {
   const email = (estado as { email?: unknown } | null)?.email;
   return typeof email === "string" ? email : "";
+}
+
+/** El círculo que gira dentro del botón azul, del tamaño de un ícono de botón.
+ *  Con "reducir movimiento" queda quieto: el texto ya dice que está entrando. */
+function Girando() {
+  return (
+    <span
+      aria-hidden
+      className="-ml-1 h-5 w-5 shrink-0 rounded-full border-2 border-luz/35 border-t-luz motion-safe:animate-spin"
+    />
+  );
 }

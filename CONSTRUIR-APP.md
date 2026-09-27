@@ -42,7 +42,7 @@ Tres interfaces, un backend, varios eventos simultáneos sin que se mezclen entr
 | Íconos | `@heroicons/react` | Autorizado por pedido de la usuaria (26-sep-2026). Outline 24 para la mayoría, solid para acciones principales, mini 20 para chips y botones chicos. El ícono acompaña al texto, no lo reemplaza |
 | Email | **Brevo**, por su API HTTP, desde el backend con `httpx` | Sólo para *olvidé mi contraseña* (26-sep-2026). Sin SDK ni SMTP. Opcional: sin configurar, la app anda igual y no manda emails |
 | Despliegue | **Render**: un web service para la API, un static site para el frontend | |
-| Autenticación | JWT propio (`pyjwt`) + `passlib[bcrypt]` | Sólo para el administrador |
+| Autenticación | JWT propio (`pyjwt`) + `passlib[bcrypt]` | Sólo para las cuentas del panel. bcrypt con **10 rondas** (27-sep-2026, ver *Contraseñas* en la sección 5) |
 
 ### Reglas de stack que no se negocian
 
@@ -96,6 +96,7 @@ transmiti-tu-foto/
     ├── vite.config.ts
     ├── tailwind.config.js
     ├── tsconfig.json
+    ├── public/              # favicon.svg y apple-touch-icon.png: el símbolo de la marca
     └── src/
         ├── main.tsx
         ├── App.tsx              # rutas
@@ -110,6 +111,8 @@ transmiti-tu-foto/
         │   ├── Cargando.tsx
         │   ├── MensajeError.tsx
         │   ├── Foto.tsx
+        │   ├── Marca.tsx        # el símbolo (cámara en un cuadrado azul de esquinas iOS) y el nombre
+        │   ├── FilaDesplegable.tsx # fila de Ajustes de iOS que se abre en el lugar
         │   └── textos.ts        # los textos de estas piezas
         ├── lib/
         │   ├── comprimir.ts     # redimensionado y recompresión
@@ -435,6 +438,9 @@ Canjea los seis dígitos que genera el panel (`POST /api/admin/eventos/{id}/vinc
 - **Cuentas.** Se crean solas desde el registro, como `organizador` y `pendiente`. Ningún admin crea cuentas con contraseña ni conoce contraseñas ajenas. Dar de baja reemplaza a borrar: la cuenta no entra, pero sus eventos y fotos quedan, los admins los siguen viendo y se puede reactivar. La única excepción para una cuenta es *Eliminar una cuenta para siempre* (abajo), sólo para superadmins.
 - La sesión se valida contra la base en cada pedido: una baja corta en el acto los tokens ya emitidos, y un cambio de rol vale desde el pedido siguiente.
 - **Sesiones que se cierran.** Un token cuyo `iat` es anterior a `usuarios.sesiones_desde` → 401 `NO_AUTORIZADO`. `sesiones_desde` se pone al restablecer la contraseña por email y al cambiarla desde Mi cuenta: así se cierran todas las sesiones abiertas de la cuenta, en todos los dispositivos. Se compara **al milisegundo**: el `iat` de los tokens lleva milisegundos (un NumericDate de JWT puede tener decimales). Al segundo no alcanzaba: una sesión abierta en el mismo segundo del cambio seguía valiendo. La sesión nueva que devuelve el cambio de contraseña se emite exactamente en `sesiones_desde`, y ésa sí sirve.
+- **Contraseñas: bcrypt con 10 rondas** (27-sep-2026). El costo se fija en un solo lugar, `security.RONDAS_BCRYPT`, y de ahí salen todos los hashes: registro, restablecer, cambiar la contraseña, `crear_admin.py` y el hash de relleno del login. Antes era 12 (el que passlib usa por defecto) y en Render gratuito, con 0,1 de CPU, el login tardaba 1,9 a 3,7 s con el servicio despierto (`/api/salud`, 0,3 s): casi todo era bcrypt. Cada ronda menos divide ese tiempo por dos; 10 es el mínimo que recomienda OWASP para bcrypt. Lo que se resigna: con una copia robada de la base, probar contraseñas cuesta la cuarta parte. Contra la API no cambia nada, porque lo que frena ahí son los topes del login (10 intentos cada 10 minutos por IP y 20 por email), que quedan igual.
+  - **Los hashes de 12 se actualizan solos.** Al entrar con la contraseña correcta, si el hash tiene otro costo, se guarda el de 10 en la misma transacción del login, después de emitir el token y antes de soltar la fila. Nunca sin la contraseña correcta, y nunca si la cuenta no entra (pendiente o de baja). Para escribir, el login relee la fila con `FOR NO KEY UPDATE` antes de bcrypt: con `FOR SHARE`, dos logins a la vez de la misma cuenta se trabarían (deadlock) al querer escribir los dos, y Postgres cortaría uno con un error; hay una prueba que lo reproduce. Pasa una vez por cuenta; después el login vuelve a ser `FOR SHARE` y no escribe nada. Cada actualización deja `cuentas: la cuenta N entró y su contraseña pasó a 10 rondas de bcrypt` en el log. Cuántas quedan: `SELECT count(*) FROM usuarios WHERE password_hash LIKE '$2b$12$%'`.
+  - **El hash de relleno** (el que se compara cuando el email no existe) sale de la misma función, con el mismo costo: si fuera más barato o más caro que los reales, el tiempo de respuesta delataría qué emails tienen cuenta. Límite conocido: mientras una cuenta conserve su hash de 12 (hasta que entre una vez), su login tarda más que el de un email inexistente, y por tiempo se podría adivinar que ese email existe. Se cierra solo a medida que cada cuenta entra; las pendientes y las de baja no entran, así que las viejas conservan el de 12 hasta que las habiliten y entren.
 - **Nadie cambia su propio rol ni su propio estado.** Así el sistema nunca se queda sin admins y nadie se bloquea solo. El nombre propio sí.
 - **El rol `superadmin` no se asigna desde el panel**, ni siquiera un superadmin a otra cuenta: se nombra a mano en la base (abajo).
 
@@ -497,7 +503,7 @@ El email de arriba es de ejemplo. El real no se escribe en el código ni en la d
 - **Desde el día, no desde la pasada.** El backend corta por la fecha (`limpieza.archivos_vencidos`: `fotos_borradas_en` puesto **o** hoy ≥ `fotos_se_borran_el`), no sólo por la marca. La pasada corre en cualquier momento de ese día —en Render gratuito, un minuto después de que alguien despierta la API, que suele ser la organizadora entrando a descargar— y borraba en plena descarga: el ZIP salía incompleto, o vacío, con 200 y sin avisar. Lo mismo si Cloudinary fallaba a mitad (imágenes borradas, videos no): el evento quedaba sin marcar hasta la pasada siguiente. Con el corte por fecha ese día ya no hay nada que ofrecer, y el panel dice *Las fotos y el video se están borrando*. El corte es exactamente el de la pasada (`fecha_evento` + 30 ≤ hoy), con el mismo "hoy".
 - **Si Cloudinary falla** (red o HTTP ≥ 400), el evento no se marca ni se cierra, y la próxima pasada lo reintenta. Borrar lo que ya no está no es error, así que reintentar un borrado a medias es seguro. El error va al log, sin el secreto. La pasada nunca tira abajo la API.
 - **Dos pasadas a la vez** (dos workers, o dos arranques pisados) no borran el mismo evento dos veces: cada uno se toma con `FOR NO KEY UPDATE SKIP LOCKED`, de a uno por transacción. `NO KEY` para no frenar el alta de una foto de ese evento.
-- **Cuándo corre:** sólo en producción y con las tres credenciales de Cloudinary. `LIMPIEZA_ACTIVA` (sección 9) lo fuerza a `true` o `false`; las pruebas lo apagan. Al arrancar deja en el log `limpieza: activa, …`; en producción y apagada, una advertencia `limpieza: APAGADA, …`. Todos sus mensajes empiezan con `limpieza:`, porque el log de uvicorn no muestra el nombre del logger: después de cada deploy, buscar esa palabra en los logs de Render. Render gratuito duerme el servicio, así que en la práctica borra la pasada de cada arranque: un evento vencido se borra la primera vez que alguien despierta la API después de su fecha.
+- **Cuándo corre:** sólo en producción y con las tres credenciales de Cloudinary. `LIMPIEZA_ACTIVA` (sección 9) lo fuerza a `true` o `false`; las pruebas lo apagan. Al arrancar deja en el log `limpieza: activa, …`; en producción y apagada, una advertencia `limpieza: APAGADA, …`. Todos sus mensajes empiezan con `limpieza:`, porque el log de uvicorn no muestra el nombre del logger: después de cada deploy, buscar esa palabra en los logs de Render. Render gratuito duerme el servicio, así que en la práctica borra la pasada de cada arranque: un evento vencido se borra la primera vez que alguien despierta la API después de su fecha. Con el servicio despierto por cron-job.org (sección 10, *Fase 9*), las pasadas son cada 6 horas.
 
 Desde el día del borrado (se hayan borrado ya o todavía no):
 
@@ -665,7 +671,9 @@ Si el polling falla:
 
 Rutas `/admin/login`, `/admin/registro`, `/admin/olvide` (olvidé mi contraseña), `/admin/restablecer` (la del link del email, con `#token=…`), `/admin` (eventos vigentes), `/admin/historial`, `/admin/cuentas` (sólo admin y superadmin), `/admin/cuenta` (Mi cuenta), `/admin/eventos/:id/revisar` y `/admin/eventos/:id/ajustes`. Las viejas `/moderar` y `/cierre` redirigen a `/revisar` y `/ajustes`.
 
-**Olvidé mi contraseña y Mi cuenta** (contrato en la sección 5). `/admin/olvide` pide el email y, pase lo que pase, dice lo mismo (el backend responde igual exista o no la cuenta). `/admin/restablecer` lee el token del fragmento de la URL, pide la contraseña nueva y, si el link ya no sirve, lo dice y ofrece pedir otro. `/admin/cuenta` cambia nombre, tema, predeterminados, contraseña y avatar; al cambiar la contraseña guarda el token nuevo que devuelve el backend.
+**Olvidé mi contraseña y Mi cuenta** (contrato en la sección 5). `/admin/olvide` pide el email y, pase lo que pase, dice lo mismo (el backend responde igual exista o no la cuenta). `/admin/restablecer` lee el token del fragmento de la URL, pide la contraseña nueva y, si el link ya no sirve, lo dice y ofrece pedir otro. `/admin/cuenta` cambia nombre, tema, predeterminados, contraseña y avatar; al cambiar la contraseña guarda el token nuevo que devuelve el backend. Decisión de la usuaria del 27-sep-2026: el nombre y la contraseña son filas desplegables estilo Ajustes de iOS (`comp/FilaDesplegable`), cerradas por defecto, con lo de ahora a la derecha. Al guardar se cierran y confirman en la fila (*Guardado* / *Listo, ya la cambiaste…*); con error quedan abiertas. La foto, Apariencia y Eventos nuevos no se pliegan.
+
+**Entrar** (27-sep-2026). Sin sesión, `/admin/login` hace un `GET /api/salud` al abrirse, una vez por carga, para despertar la API mientras se escribe; nadie espera la respuesta. No suma nada al contrato: es el mismo que visita cron-job.org (nota *Que Render no duerma la API*, en la Fase 9 de la sección 10). El botón dice *Entrando…* sin apagarse y, a los 5 s, un aviso explica la demora. Después del login se navega en el acto. El detalle, en el comentario de `admin/PaginaLogin.tsx`.
 
 **Temas.** El panel tiene tema oscuro (el de siempre) y claro estilo iOS, con los colores como variables CSS; `automatico` sigue a `prefers-color-scheme` y reacciona si cambia. Se aplica al cargar desde una copia local (sin parpadeo) y se confirma con el `tema` de `GET /api/admin/yo`. La app del invitado (`/e/…`) y la pantalla (`/p/…`) son siempre oscuras, sin importar la preferencia. Cómo está armado:
 
@@ -674,6 +682,8 @@ Rutas `/admin/login`, `/admin/registro`, `/admin/olvide` (olvidé mi contraseña
 - **Los dos fijos.** `luz` (blanco) y `sombra` (negro) no cambian con el tema: texto sobre un relleno de color o encima de una foto, el fondo del QR, y los oscurecidos sobre una foto.
 - `hoja` es el vidrio de los diálogos: en claro, casi opaco, para que lo de atrás no se transparente entre las líneas del mensaje; en oscuro, igual que `panel`.
 - **Siempre oscuros.** Las rutas del invitado y de la pantalla cuelgan de `comp/SiempreOscuro`, que fija el oscuro mientras están montadas; el script de `index.html` hace lo mismo antes del primer cuadro para `/e/…` y `/p…`. Una ruta nueva de esas zonas va adentro de las dos listas.
+
+**Marca** (decisión de la usuaria del 27-sep-2026). En el panel, el nombre de la app nunca va como texto suelto: va `comp/Marca`, un símbolo tipo ícono de iOS (cuadrado `bg-acento` con las esquinas de iOS y `CameraIcon` 24/solid en `luz`; plano, sin degradés, brillos ni sombra) y el nombre. Va en la barra del panel, con el nombre al lado (en un celular angosto, sólo el símbolo, y el nombre queda para el lector de pantalla; entre `md` y `lg`, para que entren las pestañas, la cuenta de la derecha va sólo con su círculo), y arriba de la tarjeta en Entrar, Crear cuenta, Olvidé y Restablecer, con el nombre debajo (la pone `MarcoAcceso`); en Entrar, el nombre es el `<h1>`. `public/favicon.svg` y `public/apple-touch-icon.png` son el mismo símbolo que `comp/Marca`: si cambia uno, cambian los tres. Las medidas, en el comentario de `comp/Marca.tsx`.
 
 `/admin/historial` acepta `?organizador={id}` para quedarse con los eventos de una cuenta (es el *Ver historial* de Cuentas); sólo cuenta para un admin o un superadmin. Desde una lista, Ajustes y Revisar fotos vuelven a esa misma lista con su filtro.
 
@@ -833,6 +843,14 @@ Login, listado, alta con QR descargable, bandeja de moderación con los seis pun
 Proyecto de Supabase con el esquema aplicado, web service y static site en Render, variables cargadas, CORS apuntando al dominio real, health check respondiendo.
 
 > **Acepta si:** el recorrido completo funciona contra los servicios en línea, desde un celular real y no desde la máquina de desarrollo.
+
+**Nota (27-sep-2026): que Render no duerma la API.** Render gratuito duerme el web service después de 15 minutos sin pedidos, y el primero después tarda cerca de un minuto. Para evitarlo, un servicio gratuito externo, **cron-job.org**, visita `{URL de la API}/api/salud` (la misma URL que `VITE_API_URL`) cada 10 minutos, con GET y sin cabeceras. `/api/salud` es el pedido indicado: no pide sesión, no toca nada y responde 200 aunque la base esté caída (con `base: "caida"`). Además hace un `SELECT 1`, así que de paso le da actividad a Supabase. Tres consecuencias:
+
+- **Horas del plan gratuito.** Render da 750 horas de instancia por mes a cada workspace, y un servicio despierto todo el mes usa hasta 744. Alcanza para **un solo** web service gratuito despierto (el static site no cuenta). Si en el mismo workspace hay otro web service gratuito que tampoco duerme, las horas se acaban antes de fin de mes y Render suspende los servicios hasta el mes siguiente.
+- **La limpieza de los 30 días** corre cada 6 horas, como está escrita, en vez de una vez por arranque (ver *Borrado automático a los 30 días*).
+- **Igual, abrir la pantalla diez minutos antes del evento.** Un deploy o un reinicio de Render vuelven a arrancar el servicio, y cron-job.org puede fallar.
+
+Cómo se configura, en el README (*Que la API no se duerma*). En ningún archivo del repositorio van los datos de la cuenta de cron-job.org.
 
 ### Fase 10 · Endurecimiento y pruebas
 

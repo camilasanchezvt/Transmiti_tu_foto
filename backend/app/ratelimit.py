@@ -19,8 +19,9 @@ Es en memoria a propósito: no hay Redis en el stack y agregarlo rompería la
 regla 10. Tiene dos consecuencias que conviene tener presentes y que no son
 graves para este caso de uso:
 
-- Se reinicia cuando se reinicia el servicio. En Render gratuito, que duerme,
-  pasa seguido.
+- Se reinicia cuando se reinicia el servicio: con cada deploy y, en Render
+  gratuito, cada vez que se despierta. Con el ping de cron-job.org a
+  /api/salud cada 10 minutos (README) ya casi no duerme.
 - Si algún día hay más de una instancia, cada una lleva su propia cuenta y el
   límite efectivo se multiplica por la cantidad de instancias.
 

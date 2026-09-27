@@ -4,6 +4,7 @@ import { CheckIcon, ExclamationTriangleIcon, EyeIcon, EyeSlashIcon } from "@hero
 
 import { ErrorApi } from "../api/client";
 import { claseIconoChip, type Icono } from "../comp/icono";
+import Marca from "../comp/Marca";
 import { acceso } from "./textos/acceso";
 import { comun } from "./textos/comun";
 
@@ -11,12 +12,29 @@ import { comun } from "./textos/comun";
 // y Contraseña nueva, y ninguna otra. El resto del panel vive dentro de
 // LayoutAdmin y tiene sus propios formularios; por eso están acá y no en comp/.
 
-/** Centrado en la pantalla, angosto como un formulario de iOS. En el celular,
- *  p-4 a los costados; el py extra es para que con el teclado abierto la
- *  tarjeta no quede pegada al borde. */
-export function MarcoAcceso({ children }: { children: ReactNode }) {
+/**
+ * Centrado en la pantalla, angosto como un formulario de iOS, con la marca
+ * arriba de la tarjeta. En el celular, p-4 a los costados; el py extra es para
+ * que con el teclado abierto la tarjeta no quede pegada al borde.
+ *
+ * La marca va acá y no en cada página para que esté en todas sus caras: el
+ * formulario, "Revisá tu email", "Listo", "El link ya no sirve".
+ *
+ * `titulo`: sólo Entrar, donde el nombre de la app ES el título de la página
+ * (el <h1>, con este id para el aria-labelledby del formulario) y lleva el
+ * subtítulo debajo. En las demás, el título está en la tarjeta ("Creá tu
+ * cuenta") y la marca va más chica, para no competir con él.
+ */
+export function MarcoAcceso({
+  titulo,
+  children,
+}: {
+  titulo?: { id: string; subtitulo: string };
+  children: ReactNode;
+}) {
   return (
     <main className="mx-auto flex min-h-full w-full max-w-sm flex-col justify-center gap-4 px-4 py-10 sm:px-8">
+      <Marca tamano="grande" idTitulo={titulo?.id} subtitulo={titulo?.subtitulo} className="mb-2" />
       {children}
     </main>
   );

@@ -1,5 +1,6 @@
 // Textos de Mi cuenta (/admin/cuenta): la foto y el nombre, la contraseña, el
-// tema del panel y los predeterminados de cada evento nuevo. También el nombre
+// tema del panel y los predeterminados de cada evento nuevo. El nombre y la
+// contraseña se cambian en filas que se despliegan, como en Ajustes de iOS. También el nombre
 // oculto del avatar de la barra de arriba, que lleva acá.
 //
 // Los mensajes que manda el backend (contraseña actual incorrecta, demasiados
@@ -35,6 +36,9 @@ export const cuenta = {
     fotoLista: "Listo, ya tenés foto.",
     fotoQuitada: "Listo, sacamos tu foto.",
 
+    /** La fila que se despliega para cambiar el nombre. A la derecha va el
+     *  nombre de ahora, como un valor en los Ajustes de iOS. */
+    filaNombre: "Nombre",
     nombre: "Tu nombre",
     nombreAyuda: "Así aparecés en el panel. Los invitados no lo ven.",
     nombreVacio: "Escribí tu nombre",
@@ -43,6 +47,12 @@ export const cuenta = {
 
   seguridad: {
     titulo: "Seguridad",
+    /** La fila que se despliega. A la derecha, `resumen`: dice que hay una
+     *  contraseña sin decir cuál ni cuánto mide. El lector de pantalla no lo
+     *  lee. */
+    fila: "Contraseña",
+    resumen: "••••••••",
+    /** El nombre del formulario, para el lector de pantalla. */
     cambiarTitulo: "Cambiar la contraseña",
     cambiarDetalle: "Vas a seguir adentro acá. En tus otros dispositivos vas a tener que entrar de nuevo.",
     actual: "Contraseña actual",
@@ -57,8 +67,9 @@ export const cuenta = {
     noCoinciden: "No coincide con la nueva",
     coinciden: "Coinciden",
     boton: "Cambiar contraseña",
-    /** Arriba sigue a la vista `cambiarDetalle`: esto confirma y dice qué
-     *  hacer, sin repetirlo palabra por palabra. */
+    /** En la fila, ya cerrada, unos segundos. `cambiarDetalle` se leyó antes
+     *  de cambiarla: esto confirma y dice qué hacer, sin repetirlo palabra por
+     *  palabra. */
     listo: "Listo, ya la cambiaste. En tus otros dispositivos, entrá con la nueva.",
     olvidaste: "¿No te acordás de la actual?",
     pedirLink: "Pedí un link por email",

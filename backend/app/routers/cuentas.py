@@ -116,8 +116,9 @@ def registrar(
     para averiguar qué emails están registrados.
 
     Por la misma razón el hash se calcula ANTES de mirar si el email existe:
-    bcrypt tarda un cuarto de segundo, y si sólo corriera para los emails
-    nuevos, el tiempo de respuesta delataría a los que ya están.
+    bcrypt tarda (unos 70 ms con 10 rondas; en Render gratuito, bastante más),
+    y si sólo corriera para los emails nuevos, el tiempo de respuesta delataría
+    a los que ya están.
     """
     if not permitido(
         ip_del_pedido(request), _CLAVE_REGISTRO,

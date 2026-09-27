@@ -700,6 +700,128 @@ el panel, en la sección 8. Acá va el porqué. Un endpoint nuevo, en
   llegar al Historial el evento tiene que estar terminado, así que en la
   práctica ya no hay firmas nuevas.
 
+### Login rápido: bcrypt con 10 rondas y rehash al entrar
+**27-sep-2026.** Pedido de la usuaria: el login tardaba mucho. Medido en
+producción (Render gratuito, 0,1 de CPU) con el servicio despierto:
+`/api/salud` 0,3 s y `POST /api/admin/login` **1,9 a 3,7 s**.
+
+- **La causa es bcrypt, y sólo bcrypt.** El login hace los mismos cuatro
+  viajes a la base que `/api/salud`: el ping del pool (`pool_pre_ping`, en
+  autocommit), `BEGIN` (psycopg 3 lo manda aparte), el `SELECT … FOR SHARE` y
+  el `ROLLBACK` al devolver la conexión. Todo lo que sobra por encima de los
+  0,3 s es bcrypt con 12 rondas, el costo por defecto de passlib.
+- **Medido en la máquina de desarrollo** (mediana de 15): verificar con 12
+  rondas, 272 ms; con 11, 136 ms; con 10, **68 ms**. El login de punta a punta
+  (TestClient + Postgres local, mediana de 10): 254 ms antes, **69 ms** después;
+  con email inexistente, 254 → 72 ms. El primer login de una cuenta con hash
+  de 12 tarda 336 ms una sola vez (verifica con 12 y hashea con 10).
+  Proyectado a Render, un cuarto del tiempo de bcrypt: el login debería quedar
+  alrededor de 1 s (0,3 s de red y base más lo que quede de bcrypt). Falta
+  medirlo allá después del deploy.
+- **Decisión: 10 rondas**, el mínimo que recomienda OWASP para bcrypt, en un
+  solo lugar: `security.RONDAS_BCRYPT`. Lo que se resigna: con una copia robada
+  de la base, probar contraseñas cuesta la cuarta parte. Contra la API no
+  cambia nada, porque lo que frena ahí son los topes del login (10 cada 10
+  minutos por IP, 20 por email), que quedan como estaban.
+- **Rehash al entrar.** passlib con `min_rounds` = `max_rounds` =
+  `default_rounds` = 10: un hash con otro costo "necesita actualización"
+  (`needs_update`, que lee el costo del propio hash, sin bcrypt). En el login,
+  `verify_and_update` devuelve el hash nuevo sólo si la contraseña verificó; se
+  guarda únicamente si la cuenta entra (activa), después de emitir el token y
+  antes de soltar la fila, con `db.commit()` en el mismo pedido. Así el orden
+  con un restablecimiento en curso sigue siendo el que explica el docstring del
+  login: el `iat` queda antes del `sesiones_desde` nuevo. Una pendiente o de
+  baja no se migra (no entra); con la contraseña incorrecta no se escribe nada.
+- **El deadlock que había que evitar.** Con `FOR SHARE`, dos logins a la vez de
+  la misma cuenta con hash de 12 tomaban los dos la fila, los dos querían
+  escribir y cada uno esperaba al otro: Postgres corta uno con un error (un
+  500). Se vio en la prueba de mutación (`OperationalError` en
+  `test_dos_logins_a_la_vez_con_un_hash_viejo_no_se_traban`). Solución: si la
+  cuenta está activa y el hash leído está desactualizado (chequeo barato,
+  antes de bcrypt), `rollback` y se relee con `FOR NO KEY UPDATE`. Esos logins
+  van de a uno y el segundo ya encuentra el hash de 10. Pasa una vez por
+  cuenta; después el login vuelve a `FOR SHARE` y dos logins no se frenan.
+- **El hash de relleno** (email inexistente) sale de `hashear_password`, así
+  que tiene siempre el costo de los reales. Hay prueba de las rondas y una de
+  tiempo con margen amplio (email inexistente contra contraseña incorrecta: la
+  mitad o el doble; con un relleno de 12 daba 3,8 veces).
+- **Límite conocido: la ventana de migración.** Mientras una cuenta conserve
+  su hash de 12, su login tarda unas cuatro veces lo de un email inexistente, y
+  por tiempo se podría adivinar que ese email existe. Se cierra sola a medida
+  que cada cuenta entra una vez. Para ver cuántas quedan:
+  `SELECT count(*) FROM usuarios WHERE password_hash LIKE '$2b$12$%'`. Cada
+  migración deja en el log `cuentas: la cuenta N entró y su contraseña pasó a
+  10 rondas de bcrypt`. `db/seed.sql` sigue con hashes de 12 a propósito: se
+  migran en el primer login y sirven para ver el rehash en desarrollo.
+- **Qué más se revisó del login y queda como está:**
+  - `pool_pre_ping`: un viaje más por pedido, en todos los endpoints. Está por
+    las conexiones que el pooler corta mientras Render duerme; sacarlo cambia
+    un viaje corto por errores de "server closed the connection".
+  - `lower(email)` sin índice funcional: recorre `usuarios` entera, que tiene
+    unas pocas filas (microsegundos). Si algún día son miles, un índice
+    `UNIQUE (lower(email))` pide migración.
+  - El lock `FOR SHARE` no agrega viajes (va en el mismo `SELECT`) y hace falta
+    por la carrera con restablecer.
+  - El hash de relleno se calcula la primera vez que alguien prueba un email
+    inexistente (un bcrypt más, una vez por arranque). No vale la pena
+    adelantarlo al arranque.
+  - passlib 1.7.4 con bcrypt 4 dejaba un traceback "(trapped) error reading
+    bcrypt version" en el primer login de cada arranque. Inofensivo, pero en el
+    log de Render parecía una falla del login: el logger
+    `passlib.handlers.bcrypt` quedó en ERROR.
+  - El log de "cambió su contraseña desde Mi cuenta" iba al logger
+    `app.routers.admin`, que a nivel INFO no sale en Render. Ahora va, como el
+    del rehash, a `uvicorn.error.cuentas`.
+- **Que Render no duerma la API.** La usuaria configura cron-job.org para
+  visitar `/api/salud` cada 10 minutos (Render duerme a los 15). Queda en la
+  *Fase 9* de `CONSTRUIR-APP.md` y en el README (*Que la API no se duerma*).
+  Consecuencias: las 750 horas gratuitas por workspace alcanzan para un solo
+  web service despierto todo el mes (744 h); la limpieza de los 30 días pasa a
+  correr cada 6 horas en vez de una vez por arranque; los topes en memoria
+  duran más (se reinician sólo con un deploy o un reinicio). Igual, abrir la
+  pantalla diez minutos antes del evento.
+- **Pruebas:** `tests/test_costo_bcrypt.py` (24). Las de locks traban el
+  primer login adentro de `verificar_y_actualizar` y miran desde otra conexión
+  qué modo de lock se puede tomar con `NOWAIT`, igual que las de borrar eventos.
+
+### Marca, filas desplegables en Mi cuenta y Entrar más rápido (panel)
+**27-sep-2026.** Los mismos pedidos, del lado del panel. Qué es y dónde se
+usa, en la sección 8 de `CONSTRUIR-APP.md`; las medidas, en los comentarios
+de `comp/Marca.tsx`, `comp/FilaDesplegable.tsx` y `admin/PaginaLogin.tsx`.
+Acá, el porqué de lo que no se ve a simple vista:
+
+- **Marca plana a propósito.** Cuadrado `acento` con radio del 22 % y
+  `CameraIcon` (24/solid) al 58 %, la proporción de los glifos de iOS. Sin
+  degradé ni brillo: la usuaria no quería nada que pareciera hecho con IA.
+  Por debajo de 360 px la barra muestra sólo el símbolo, y el link sigue
+  midiendo 44×44 (`min-w-11`). El favicon copia el trazo de heroicons de
+  node_modules; el apple-touch-icon es un PNG de 180 px sin esquinas (iOS las
+  recorta). En *Revisá tu email* el sobre pasó a outline: relleno y azul, se
+  leía como un segundo ícono de app debajo de la marca.
+- **Filas desplegables.** Títulos *Nombre* y *Contraseña* con el valor a la
+  derecha, como Ajustes de iOS (la usuaria había escrito "Cambiar nombre" y
+  "Cambiar contraseña": queda para confirmar). El formulario se monta al
+  abrir y se desmonta al cerrar, así una contraseña a medio escribir no queda
+  en memoria. La confirmación se ve en la fila: 2,5 s *Guardado*; 6 s la de la
+  contraseña, que es una frase. Mientras guarda, la fila no se cierra: si el
+  servidor fallaba con el formulario ya desmontado, el error no se veía. El
+  gris del toque va con `active:`, y el de pasar el mouse sólo donde hay mouse
+  (`(hover: hover)`): Safari de iPhone deja `:hover` pegado en lo último que
+  tocaste.
+- **Entrar.** Sin sesión, un `GET /api/salud` al abrir (una vez por carga)
+  despierta la API mientras se escribe. Con token, `comprobarSesion` deja la
+  respuesta en el caché de `useSesion` y el panel no vuelve a pedir `/yo`.
+  Después del login se navega en el acto, y el panel pide `/yo` y los eventos
+  a la vez. El botón queda a color con *Entrando…* y un círculo que gira: el
+  `cargando` de `Boton` lo pone gris y parece que no pasa nada. A los 5 s, un
+  aviso explica la demora.
+- **Revisión mobile del cierre:** 320, 375, 800 y 1280 px, claro y oscuro,
+  superadmin y organizador, en Entrar, Crear cuenta, Olvidé, Restablecer,
+  Eventos, Historial, Cuentas y Mi cuenta (filas cerradas, abiertas, guardar
+  el nombre y cambiar la contraseña): sin scroll horizontal ni objetivos de
+  menos de 44 px. A 320 px un nombre largo a la derecha de la fila se corta
+  con "…", como en iOS.
+
 ---
 
 ## Pendientes de decidir

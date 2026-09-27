@@ -73,6 +73,18 @@ function usuarioEnMemoria(token: string | null): UsuarioYo | null {
 }
 
 /**
+ * Para Entrar: si ya hay un token, pregunta quién es por el mismo camino que
+ * useSesion, así la respuesta queda guardada. Si la sesión sirve y Entrar
+ * manda a /admin, el panel ya sabe quién es y no vuelve a preguntar: un pedido
+ * menos en fila, que con el servidor recién despierto son segundos. Sin token,
+ * null.
+ */
+export function comprobarSesion(): Promise<UsuarioYo> | null {
+  const token = tokenDeSesion();
+  return token ? pedirYo(token) : null;
+}
+
+/**
  * Vuelve a preguntar quién es, sin cerrar la sesión. Para cuando el backend
  * contesta 403 donde el panel creía que había permiso: casi siempre, alguien le
  * cambió el rol a esta cuenta con el panel abierto. Sin esto, un admin pasado a

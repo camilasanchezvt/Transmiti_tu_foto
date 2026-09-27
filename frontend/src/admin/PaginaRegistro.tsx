@@ -147,7 +147,6 @@ export default function PaginaRegistro() {
         className="flex flex-col gap-4 rounded-3xl border border-borde bg-panel p-5 sm:p-6"
       >
         <header className="mb-1 flex flex-col gap-1 text-center">
-          <p className="text-sm font-medium text-tenue">{acceso.marca}</p>
           <h1 id={idTitulo} className="text-2xl font-semibold tracking-tight">
             {acceso.registro.titulo}
           </h1>

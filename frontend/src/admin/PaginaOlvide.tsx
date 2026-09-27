@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { EnvelopeIcon } from "@heroicons/react/24/solid";
+// Outline: el sobre relleno en azul se leía como un segundo ícono de app
+// debajo del símbolo de la marca (MarcoAcceso). El trazo lo distingue.
+import { EnvelopeIcon } from "@heroicons/react/24/outline";
 
 import { cuentas } from "../api/client";
 import Boton, { claseBoton } from "../comp/Boton";
@@ -140,7 +142,6 @@ export default function PaginaOlvide() {
         className="flex flex-col gap-4 rounded-3xl border border-borde bg-panel p-5 sm:p-6"
       >
         <header className="mb-1 flex flex-col gap-1 text-center">
-          <p className="text-sm font-medium text-tenue">{acceso.marca}</p>
           <h1 id={idTitulo} className="text-balance text-2xl font-semibold tracking-tight">
             {t.titulo}
           </h1>

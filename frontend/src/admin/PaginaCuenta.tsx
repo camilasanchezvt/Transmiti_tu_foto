@@ -10,12 +10,15 @@ import {
   type ReactNode,
 } from "react";
 import { Link } from "react-router-dom";
-import { CheckIcon as GuardarReposo, MoonIcon, SunIcon } from "@heroicons/react/24/outline";
 import {
-  CheckCircleIcon,
-  CheckIcon as GuardarPrincipal,
-  LockClosedIcon as ContrasenaPrincipal,
-} from "@heroicons/react/24/solid";
+  CheckIcon as GuardarReposo,
+  ComputerDesktopIcon,
+  LockClosedIcon as ContrasenaFila,
+  MoonIcon,
+  SunIcon,
+  UserIcon,
+} from "@heroicons/react/24/outline";
+import { CheckIcon as GuardarPrincipal, LockClosedIcon as ContrasenaPrincipal } from "@heroicons/react/24/solid";
 import {
   CameraIcon,
   CheckIcon as ListoMini,
@@ -33,6 +36,7 @@ import Boton from "../comp/Boton";
 import BotonChico from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import { ChipRol } from "../comp/ChipEstado";
+import FilaDesplegable from "../comp/FilaDesplegable";
 import { claseIconoChip, type Icono } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
 import { ArchivoInvalido, CALIDAD, comprimir } from "../lib/comprimir";
@@ -50,11 +54,29 @@ import { actualizarUsuarioEnSesion, useAlPerderSesion, useSesion } from "./useSe
 // evento nuevo. Cada tarjeta guarda lo suyo por separado: cambiar el tema no
 // puede esperar a que alguien toque un Guardar al pie de la página.
 //
+// El nombre y la contraseña son filas que se despliegan (FilaDesplegable):
+// cerradas se ve lo de ahora; se abren para cambiarlo y, al guardar, se cierran
+// solas y lo confirman en la fila misma. La página queda corta en el celular y
+// los formularios no están abiertos cuando nadie los usa.
+//
 // Todo lo que el backend devuelve (la cuenta entera) pasa por
 // actualizarUsuarioEnSesion: la barra de arriba cambia el nombre y la foto en
 // el acto, sin volver a preguntar quién es.
 
 const TARJETA = "rounded-3xl border border-borde bg-panel p-5";
+
+/** La tarjeta de Perfil: la foto arriba y la fila del nombre al pie. Abajo,
+ *  casi sin relleno: la fila (48 px, el texto al medio) ya deja su aire, y
+ *  abierta suma el suyo. */
+const TARJETA_PERFIL = "rounded-3xl border border-borde bg-panel px-5 pb-1 pt-5";
+
+/** Una tarjeta que es sólo filas, como un grupo de Ajustes de iOS. */
+const TARJETA_FILAS = "rounded-3xl border border-borde bg-panel px-5 py-1";
+
+/** Cuánto se ve la confirmación en la fila. La de la contraseña es una frase
+ *  entera que dice qué hacer en los otros dispositivos: más tiempo. */
+const GUARDADO_MS = 2500;
+const LISTO_CONTRASENA_MS = 6000;
 
 /** Los botones grandes ocupan todo el ancho en el celular; en la compu, el de
  *  su texto. Lo mismo que en Ajustes. */
@@ -110,14 +132,16 @@ export default function PaginaCuenta() {
       ) : (
         <div className="flex flex-col gap-10">
           <Seccion titulo={t.perfil.titulo}>
-            <div className={TARJETA}>
+            <div className={TARJETA_PERFIL}>
               <FotoDePerfil usuario={usuario} reflejar={reflejar} alPerderSesion={alPerderSesion} />
               <Nombre usuario={usuario} reflejar={reflejar} alPerderSesion={alPerderSesion} />
             </div>
           </Seccion>
 
           <Seccion titulo={t.seguridad.titulo}>
-            <Contrasena email={usuario.email} alPerderSesion={alPerderSesion} />
+            <div className={TARJETA_FILAS}>
+              <Contrasena email={usuario.email} alPerderSesion={alPerderSesion} />
+            </div>
           </Seccion>
 
           <Seccion titulo={t.apariencia.titulo}>
@@ -165,8 +189,9 @@ function ErrorEnLinea({ texto }: { texto: string }) {
   );
 }
 
-/** "Guardado" con el tilde, dos segundos y medio. */
-function useGuardado(): [boolean, () => void, () => void] {
+/** "Guardado" con el tilde, un momento: `ms`, dos segundos y medio si no se
+ *  dice otra cosa. */
+function useGuardado(ms = GUARDADO_MS): [boolean, () => void, () => void] {
   const [visible, setVisible] = useState(false);
   const reloj = useRef<number | undefined>(undefined);
 
@@ -175,8 +200,8 @@ function useGuardado(): [boolean, () => void, () => void] {
   const mostrar = useCallback(() => {
     setVisible(true);
     window.clearTimeout(reloj.current);
-    reloj.current = window.setTimeout(() => setVisible(false), 2500);
-  }, []);
+    reloj.current = window.setTimeout(() => setVisible(false), ms);
+  }, [ms]);
   const ocultar = useCallback(() => {
     window.clearTimeout(reloj.current);
     setVisible(false);
@@ -201,7 +226,8 @@ function Guardado({ visible, texto = comun.verbos.guardado }: { visible: boolean
 }
 
 /** El botón de guardar de cada tarjeta: azul cuando hay algo para guardar,
- *  de vidrio y apagado cuando no. Con el "Guardado" al lado. */
+ *  de vidrio y apagado cuando no. Con el "Guardado" al lado, salvo en una
+ *  fila que se despliega: ahí lo dice la fila, ya cerrada. */
 function FilaGuardar({
   listo,
   guardando,
@@ -209,7 +235,7 @@ function FilaGuardar({
 }: {
   listo: boolean;
   guardando: boolean;
-  guardado: boolean;
+  guardado?: boolean;
 }) {
   return (
     <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -223,7 +249,7 @@ function FilaGuardar({
       >
         {comun.verbos.guardar}
       </Boton>
-      <Guardado visible={guardado} />
+      {guardado !== undefined && <Guardado visible={guardado} />}
     </div>
   );
 }
@@ -489,6 +515,11 @@ function Progreso({ etapa }: { etapa: Etapa }) {
 
 // ── Perfil: el nombre ────────────────────────────────────────
 
+/**
+ * La fila del nombre, al pie de la tarjeta de Perfil. Cerrada, el nombre de
+ * ahora a la derecha. Al guardar se cierra sola y dice "Guardado" un momento;
+ * si algo falla, queda abierta con el error.
+ */
 function Nombre({
   usuario,
   reflejar,
@@ -498,6 +529,55 @@ function Nombre({
   reflejar: Reflejar;
   alPerderSesion: AlPerderSesion;
 }) {
+  const [abierto, setAbierto] = useState(false);
+  const [guardado, mostrarGuardado, ocultarGuardado] = useGuardado();
+  const guardando = useRef(false);
+
+  return (
+    <FilaDesplegable
+      icono={UserIcon}
+      titulo={t.perfil.filaNombre}
+      resumen={usuario.nombre}
+      confirmacion={guardado ? comun.verbos.guardado : null}
+      abierto={abierto}
+      onCambiar={(a) => {
+        // Mientras guarda no se cierra: si el servidor fallara con el
+        // formulario ya desmontado, el error no se vería.
+        if (!a && guardando.current) return;
+        setAbierto(a);
+        ocultarGuardado();
+      }}
+      className="mt-4 border-t border-borde pt-1"
+    >
+      <FormularioNombre
+        usuario={usuario}
+        reflejar={reflejar}
+        alPerderSesion={alPerderSesion}
+        enCamino={guardando}
+        alGuardar={() => {
+          setAbierto(false);
+          mostrarGuardado();
+        }}
+      />
+    </FilaDesplegable>
+  );
+}
+
+/** Se monta cada vez que se abre la fila: arranca con el nombre de ahora. */
+function FormularioNombre({
+  usuario,
+  reflejar,
+  alPerderSesion,
+  enCamino,
+  alGuardar,
+}: {
+  usuario: UsuarioYo;
+  reflejar: Reflejar;
+  alPerderSesion: AlPerderSesion;
+  /** Lo lee la fila: mientras hay un pedido en camino, no se cierra. */
+  enCamino: MutableRefObject<boolean>;
+  alGuardar: () => void;
+}) {
   const tp = t.perfil;
   const [nombre, setNombre] = useState(usuario.nombre);
   // El error se ve cuando salió del campo o tocó Guardar: no mientras borra
@@ -505,7 +585,6 @@ function Nombre({
   const [mostrarError, setMostrarError] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [guardado, mostrarGuardado, ocultarGuardado] = useGuardado();
   const campo = useRef<HTMLInputElement>(null);
 
   const limpio = nombre.trim();
@@ -521,21 +600,24 @@ function Nombre({
       return;
     }
     setGuardando(true);
+    enCamino.current = true;
     setError(null);
     try {
       const nueva = await admin.actualizarYo({ nombre: limpio });
       reflejar(nueva);
       setNombre(nueva.nombre);
-      mostrarGuardado();
+      enCamino.current = false;
+      alGuardar();
     } catch (err) {
       if (!alPerderSesion(err)) setError(err);
     } finally {
+      enCamino.current = false;
       setGuardando(false);
     }
   }
 
   return (
-    <form onSubmit={guardar} noValidate className="mt-5 border-t border-borde pt-5">
+    <form onSubmit={guardar} noValidate>
       <Campo
         etiqueta={tp.nombre}
         refCampo={campo}
@@ -543,7 +625,6 @@ function Nombre({
         value={nombre}
         onChange={(e) => {
           setNombre(e.target.value);
-          ocultarGuardado();
           setError(null);
         }}
         onBlur={() => setMostrarError(true)}
@@ -553,7 +634,7 @@ function Nombre({
         autoCapitalize="words"
         maxLength={MAXIMO_NOMBRE}
       />
-      <FilaGuardar listo={cambio} guardando={guardando} guardado={guardado} />
+      <FilaGuardar listo={cambio} guardando={guardando} />
       {error != null && <ErrorEnLinea texto={mensajeDe(error)} />}
     </form>
   );
@@ -580,20 +661,71 @@ function validarContrasena(d: DatosContrasena): Partial<Record<CampoContrasena, 
 }
 
 /**
- * Cambiar la contraseña. El backend cierra todas las sesiones de la cuenta y
- * devuelve una nueva para ésta: admin.cambiarContrasena la guarda sola, y
- * quien la cambió sigue adentro sin darse cuenta.
+ * La fila de la contraseña, sola en la tarjeta de Seguridad. Al cambiarla se
+ * cierra y dice "Listo, ya la cambiaste…" en la fila unos segundos; si algo
+ * falla, queda abierta con el error.
  */
 function Contrasena({ email, alPerderSesion }: { email: string; alPerderSesion: AlPerderSesion }) {
   const ts = t.seguridad;
-  const idTitulo = useId();
+  const [abierto, setAbierto] = useState(false);
+  const [listo, mostrarListo, ocultarListo] = useGuardado(LISTO_CONTRASENA_MS);
+  const enviando = useRef(false);
+
+  return (
+    <FilaDesplegable
+      icono={ContrasenaFila}
+      titulo={ts.fila}
+      resumen={ts.resumen}
+      resumenOculto
+      confirmacion={listo ? ts.listo : null}
+      abierto={abierto}
+      onCambiar={(a) => {
+        // Como el nombre: mientras se envía, no se cierra.
+        if (!a && enviando.current) return;
+        setAbierto(a);
+        ocultarListo();
+      }}
+    >
+      <FormularioContrasena
+        email={email}
+        alPerderSesion={alPerderSesion}
+        enCamino={enviando}
+        alCambiar={() => {
+          setAbierto(false);
+          mostrarListo();
+        }}
+      />
+    </FilaDesplegable>
+  );
+}
+
+/**
+ * Cambiar la contraseña. El backend cierra todas las sesiones de la cuenta y
+ * devuelve una nueva para ésta: admin.cambiarContrasena la guarda sola, y
+ * quien la cambió sigue adentro sin darse cuenta.
+ *
+ * Se monta al abrir la fila y se desmonta al cerrarla: lo escrito no queda en
+ * memoria con la fila cerrada, aunque no se haya enviado.
+ */
+function FormularioContrasena({
+  email,
+  alPerderSesion,
+  enCamino,
+  alCambiar,
+}: {
+  email: string;
+  alPerderSesion: AlPerderSesion;
+  /** Lo lee la fila: mientras hay un pedido en camino, no se cierra. */
+  enCamino: MutableRefObject<boolean>;
+  alCambiar: () => void;
+}) {
+  const ts = t.seguridad;
   const [datos, setDatos] = useState<DatosContrasena>({ actual: "", nueva: "", repetir: "" });
   const [tocados, setTocados] = useState<Partial<Record<CampoContrasena, boolean>>>({});
   const [intentoEnviar, setIntentoEnviar] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [vez, setVez] = useState(0);
-  const [listo, setListo] = useState(false);
 
   const refs = {
     actual: useRef<HTMLInputElement>(null),
@@ -610,7 +742,6 @@ function Contrasena({ email, alPerderSesion }: { email: string; alPerderSesion: 
 
   function cambiar(c: CampoContrasena, valor: string) {
     setDatos((d) => ({ ...d, [c]: valor }));
-    setListo(false);
   }
 
   function salir(c: CampoContrasena) {
@@ -622,7 +753,6 @@ function Contrasena({ email, alPerderSesion }: { email: string; alPerderSesion: 
     if (enviando) return;
     setIntentoEnviar(true);
     setError(null);
-    setListo(false);
 
     const primero = ORDEN_CONTRASENA.find((c) => errores[c]);
     if (primero) {
@@ -631,15 +761,17 @@ function Contrasena({ email, alPerderSesion }: { email: string; alPerderSesion: 
     }
 
     setEnviando(true);
+    enCamino.current = true;
     try {
       await admin.cambiarContrasena(datos.actual, datos.nueva);
       // Nada de contraseñas en memoria después de esto.
       setDatos({ actual: "", nueva: "", repetir: "" });
       setTocados({});
       setIntentoEnviar(false);
-      setListo(true);
-      // Que el teclado del celular baje y se lea el "Listo".
-      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      // La fila se cierra y el foco vuelve a ella: el teclado del celular
+      // baja y se lee el "Listo".
+      enCamino.current = false;
+      alCambiar();
     } catch (err) {
       // Un 401 es que esta sesión ya no sirve (la cambiaron desde otro lado):
       // al login. La actual incorrecta (422) y los muchos intentos (429)
@@ -648,16 +780,14 @@ function Contrasena({ email, alPerderSesion }: { email: string; alPerderSesion: 
       setError(err);
       setVez((n) => n + 1);
     } finally {
+      enCamino.current = false;
       setEnviando(false);
     }
   }
 
   return (
-    <form onSubmit={enviar} noValidate aria-labelledby={idTitulo} className={TARJETA}>
-      <h3 id={idTitulo} className="text-lg font-semibold">
-        {ts.cambiarTitulo}
-      </h3>
-      <p className="mt-1 text-sm text-tenue">{ts.cambiarDetalle}</p>
+    <form onSubmit={enviar} noValidate aria-label={ts.cambiarTitulo}>
+      <p className="text-sm text-tenue">{ts.cambiarDetalle}</p>
 
       {/* Para el gestor de contraseñas: sin el email, no sabe de qué cuenta
           es la contraseña nueva que ofrece guardar. */}
@@ -713,15 +843,6 @@ function Contrasena({ email, alPerderSesion }: { email: string; alPerderSesion: 
         </div>
       )}
 
-      <div role="status">
-        {listo && (
-          <p className="mt-4 flex items-start gap-2 rounded-2xl bg-verde/15 px-4 py-3 text-base leading-snug text-verde-tinta">
-            <CheckCircleIcon aria-hidden className="mt-px h-5 w-5 shrink-0" />
-            <span className="min-w-0">{ts.listo}</span>
-          </p>
-        )}
-      </div>
-
       <Boton type="submit" className={`mt-4 ${ANCHO_BOTON}`} icono={ContrasenaPrincipal} cargando={enviando}>
         {ts.boton}
       </Boton>
@@ -746,21 +867,12 @@ function Contrasena({ email, alPerderSesion }: { email: string; alPerderSesion: 
 
 // ── Apariencia ───────────────────────────────────────────────
 
-/** Medio círculo lleno: el ícono de "sigue al sistema". Heroicons no lo trae;
- *  mismo trazo que los de 24/outline. */
-function IconoAutomatico({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} aria-hidden className={className}>
-      <circle cx="12" cy="12" r="8.25" />
-      <path d="M12 3.75a8.25 8.25 0 0 1 0 16.5Z" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
+/** Automático usa ComputerDesktopIcon, el ícono de "sigue al sistema" de
+ *  heroicons (CLAUDE.md: nada de SVG escritos a mano). */
 const ICONO_TEMA: Record<Tema, Icono> = {
   oscuro: MoonIcon,
   claro: SunIcon,
-  automatico: IconoAutomatico,
+  automatico: ComputerDesktopIcon,
 };
 
 const TEMAS: Tema[] = ["oscuro", "claro", "automatico"];

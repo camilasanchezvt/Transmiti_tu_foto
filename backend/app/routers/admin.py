@@ -82,12 +82,15 @@ from ..schemas import (
     VideoEvento,
 )
 from ..security import (
+    RONDAS_BCRYPT,
     al_milisegundo,
     crear_token,
     generar_codigo_publico,
     generar_token_pantalla,
+    hash_desactualizado,
     hashear_password,
     verificar_password,
+    verificar_y_actualizar,
 )
 from .cuentas import anular_recuperaciones
 
@@ -115,6 +118,9 @@ log = logging.getLogger(__name__)
 # `app.*` sólo mostraría los errores). Los mensajes empiezan con "eventos:"
 # porque el log de uvicorn no muestra el nombre del logger.
 log_eventos = logging.getLogger("uvicorn.error").getChild("eventos")
+# Lo mismo para lo que le pasa a una cuenta desde acá (login, contraseña), con
+# el "cuentas:" de routers/cuentas.py. Con `log`, a nivel INFO no salía nada.
+log_cuentas = logging.getLogger("uvicorn.error").getChild("cuentas")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -123,15 +129,22 @@ log_eventos = logging.getLogger("uvicorn.error").getChild("eventos")
 
 @lru_cache(maxsize=1)
 def _hash_de_relleno() -> str:
-    """Un hash cualquiera para comparar cuando el email no existe (ver login)."""
+    """Un hash cualquiera para comparar cuando el email no existe (ver login).
+
+    Sale de `hashear_password`, así que tiene el mismo costo que los hashes
+    reales (RONDAS_BCRYPT): si fuera más barato o más caro, el tiempo de
+    respuesta delataría qué emails tienen cuenta."""
     return hashear_password("relleno-para-igualar-los-tiempos")
 
 
-# Topes del login, cada 10 minutos. Cada intento cuesta un bcrypt entero (un
-# cuarto de segundo de un núcleo; en Render gratuito, bastante más): sin tope,
-# cualquiera prueba contraseñas sin freno o satura la única instancia durante
-# un evento. Por IP frena a un script; por email frena a muchos que prueban
-# contra la misma cuenta. Con un token de 12 horas, nadie de verdad llega.
+# Topes del login, cada 10 minutos. Cada intento cuesta un bcrypt entero (unos
+# 70 ms de un núcleo con 10 rondas; en Render gratuito, bastante más): sin
+# tope, cualquiera prueba contraseñas sin freno o satura la única instancia
+# durante un evento. Por IP frena a un script; por email frena a muchos que
+# prueban contra la misma cuenta. Con un token de 12 horas, nadie de verdad
+# llega. Son también lo que compensa haber bajado bcrypt de 12 a 10 rondas
+# (security.py): cada bcrypt cuesta la cuarta parte, pero contra la API lo que
+# frena es el tope, y por acá se siguen probando 10 cada 10 minutos.
 MAXIMO_LOGINS_POR_IP = 10
 MAXIMO_LOGINS_POR_EMAIL = 20
 # No puede ser una IP ni un código público: lleva una barra.
@@ -184,6 +197,18 @@ def login(pedido: PedidoLogin, request: Request, db: Session = Depends(get_db)) 
     muere. Dos logins a la vez no se frenan entre sí, y las FK de fotos y
     eventos (FOR KEY SHARE) tampoco chocan: lo único que espera, lo que dura
     un bcrypt, es un cambio a esta misma cuenta.
+
+    Un hash con el costo de antes (12 rondas; hoy es RONDAS_BCRYPT, ver
+    security.py) se rehace al entrar: si la contraseña verificó y la cuenta
+    entra, el hash nuevo se guarda en esta misma transacción, DESPUÉS de emitir
+    el token y antes de soltar el lock (así el razonamiento de arriba sigue
+    valiendo). Con la contraseña incorrecta, o una cuenta pendiente o de baja,
+    no se escribe nada. Para escribir hace falta el lock fuerte, y subirlo
+    desde FOR SHARE se podía trabar con otro login de la misma cuenta que
+    tuviera el suyo (un deadlock que Postgres corta con un error). Por eso,
+    cuando el hash leído está desactualizado, se suelta el FOR SHARE y se
+    relee la fila con FOR NO KEY UPDATE, antes de bcrypt: esos logins van de a
+    uno, y el segundo ya encuentra el hash nuevo. Pasa una sola vez por cuenta.
     """
     email = pedido.email.strip().lower()
     if not permitido_en_todas([
@@ -193,21 +218,31 @@ def login(pedido: PedidoLogin, request: Request, db: Session = Depends(get_db)) 
         raise ErrorApp(Codigo.DEMASIADOS_PEDIDOS, _MUCHOS_INTENTOS)
     limpiar_cada_tanto()
 
-    usuario = db.scalar(
-        select(Usuario)
-        .where(func.lower(Usuario.email) == email)
-        .with_for_update(read=True)
-    )
+    por_email = select(Usuario).where(func.lower(Usuario.email) == email)
+    usuario = db.scalar(por_email.with_for_update(read=True))
+    if (
+        usuario is not None
+        and usuario.estado == "activa"
+        and hash_desactualizado(usuario.password_hash)
+    ):
+        db.rollback()
+        usuario = db.scalar(por_email.with_for_update(key_share=True))
     if usuario is None:
         verificar_password(pedido.password, _hash_de_relleno())
         raise ErrorApp(Codigo.NO_AUTORIZADO, _NO_ENTRA)
-    if not verificar_password(pedido.password, usuario.password_hash):
+    valida, hash_nuevo = verificar_y_actualizar(pedido.password, usuario.password_hash)
+    if not valida:
         raise ErrorApp(Codigo.NO_AUTORIZADO, _NO_ENTRA)
     if usuario.estado == "pendiente":
         raise ErrorApp(Codigo.NO_AUTORIZADO, _NO_ENTRA)
     if usuario.estado == "baja":
         raise ErrorApp(Codigo.NO_AUTORIZADO, "Esta cuenta está dada de baja.", http=403)
     token, expira_en = crear_token(usuario.id, usuario.email)
+    if hash_nuevo is not None:
+        usuario.password_hash = hash_nuevo
+        db.commit()
+        log_cuentas.info("cuentas: la cuenta %s entró y su contraseña pasó a %d rondas de bcrypt",
+                         usuario.id, RONDAS_BCRYPT)
     return Sesion(token=token, expira_en=expira_en)
 
 
@@ -366,7 +401,7 @@ def cambiar_contrasena(
     usuario.sesiones_desde = momento
     anular_recuperaciones(db, usuario.id, momento)
     db.commit()
-    log.info("cuentas: la cuenta %s cambió su contraseña desde Mi cuenta", usuario.id)
+    log_cuentas.info("cuentas: la cuenta %s cambió su contraseña desde Mi cuenta", usuario.id)
     token, expira_en = crear_token(usuario.id, usuario.email, emitido_en=momento)
     return Sesion(token=token, expira_en=expira_en)
 
