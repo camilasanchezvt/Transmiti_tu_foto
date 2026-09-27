@@ -14,6 +14,7 @@ import type {
   Cuenta,
   CuentaEliminada,
   EventoAdmin,
+  EventoBorrado,
   CambioEvento,
   EventoNuevo,
   EventoPublico,
@@ -26,6 +27,7 @@ import type {
   FotoRegistrada,
   ListaFotosAdmin,
   Pantalla,
+  PedidoBorrarEvento,
   PedidoEliminarCuenta,
   PedidoCambioContrasena,
   PedidoLogin,
@@ -466,6 +468,17 @@ export const admin = {
     pedir<EventoAdmin>(`/api/admin/eventos/${id}`, {
       metodo: "PATCH",
       cuerpo: { estado },
+      conAuth: true,
+    }),
+
+  /** Borra el evento para siempre, con sus fotos y su video. Sólo admin y
+   *  superadmin, y sólo uno del Historial. `confirmar_nombre` tiene que ser el
+   *  nombre del evento: va en el cuerpo, nunca en la URL. Si Cloudinary falla
+   *  responde 503 y no borra nada. */
+  borrarEvento: (id: number, confirmar_nombre: string) =>
+    pedir<EventoBorrado>(`/api/admin/eventos/${id}`, {
+      metodo: "DELETE",
+      cuerpo: { confirmar_nombre } satisfies PedidoBorrarEvento,
       conAuth: true,
     }),
 

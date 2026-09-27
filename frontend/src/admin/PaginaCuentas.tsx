@@ -416,7 +416,10 @@ export default function PaginaCuentas() {
       )}
 
       {/* Aviso de lo que se acaba de hacer. En el celular va por encima de la
-          barra de pestañas de abajo. */}
+          barra de pestañas de abajo. `!bg-sombra/75`: con el 40 % de
+          .vidrio-oscuro (pensado para ir sobre una foto) el blanco quedaba en
+          3,3:1 sobre la página clara; lleva `!` porque .vidrio-oscuro es de
+          @layer utilities y, si no, gana. */}
       <div
         role="status"
         aria-live="polite"
@@ -425,7 +428,7 @@ export default function PaginaCuentas() {
         {aviso && (
           <p
             key={aviso.vez}
-            className="vidrio-oscuro flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-luz"
+            className="vidrio-oscuro !bg-sombra/75 flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-luz"
           >
             <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0 text-verde" />
             <span className="min-w-0">{aviso.texto}</span>

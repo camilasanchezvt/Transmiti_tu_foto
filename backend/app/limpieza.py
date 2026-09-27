@@ -6,6 +6,12 @@ la base. La regla "nada se borra" es sobre la base; los archivos de Cloudinary
 se borran porque así lo decidió la usuaria, y la fila del evento queda marcada
 con `fotos_borradas_en`.
 
+Borrar un evento del Historial (DELETE /api/admin/eventos/{id}, en
+routers/admin.py) usa el mismo borrado de Cloudinary cuando las fotos todavía
+no se borraron, y después sí se lleva las filas. Toma el evento con FOR UPDATE:
+mientras tanto la pasada lo saltea (SKIP LOCKED), y si la pasada lo tenía
+primero, el borrado espera y ve su `fotos_borradas_en`.
+
 Cuándo: el día `fotos_se_borran_el` = fecha_evento + 30 días, o en la primera
 pasada después. "Hoy" es el de Argentina (UTC−3 fijo), igual que en el panel.
 

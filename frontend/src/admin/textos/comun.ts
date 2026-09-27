@@ -71,6 +71,8 @@ export const comun = {
     guardar: "Guardar",
     guardado: "Guardado",
     terminarEvento: "Terminar el evento",
+    /** Igual en Historial y en Ajustes: la acción y el botón del diálogo. */
+    borrarEvento: "Borrar evento",
     volver: "Volver",
   },
 

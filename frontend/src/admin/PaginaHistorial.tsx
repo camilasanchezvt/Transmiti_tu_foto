@@ -1,6 +1,7 @@
 import {
   ArrowDownTrayIcon,
   CalendarDaysIcon,
+  CheckCircleIcon,
   ChevronDownIcon,
   ClockIcon as ClockIconMini,
   Cog6ToothIcon,
@@ -9,24 +10,34 @@ import {
   TrashIcon,
   UsersIcon,
 } from "@heroicons/react/20/solid";
-import { ClockIcon } from "@heroicons/react/24/outline";
-import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { ClockIcon, TrashIcon as BorrarGrande } from "@heroicons/react/24/outline";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
-import { admin } from "../api/client";
-import type { Cuenta, EventoAdmin } from "../api/tipos";
+import { ErrorApi, admin } from "../api/client";
+import type { Cuenta, EventoAdmin, EventoBorrado } from "../api/tipos";
 import BotonChico, { claseBotonChico } from "../comp/BotonChico";
 import Cargando from "../comp/Cargando";
 import ChipEstado from "../comp/ChipEstado";
+import Confirmar from "../comp/Confirmar";
 import { claseIconoChico, claseIconoChip, type Icono } from "../comp/icono";
 import MensajeError from "../comp/MensajeError";
 import { DIAS_DE_AVISO, diasParaElBorrado, sinArchivos, urlDescargaVideo } from "../lib/descargas";
 import { fechaLarga } from "../lib/fecha";
 import LayoutAdmin from "./LayoutAdmin";
-import { anclaDelEvento, type DesdeLista } from "./navegacion";
+import { anclaDelEvento, esDelHistorial, type DesdeLista } from "./navegacion";
 import { comun } from "./textos/comun";
 import { historial as t } from "./textos/historial";
-import { useAlPerderSesion, useSesion } from "./useSesion";
+import { revalidarSesion, useAlPerderSesion, useSesion } from "./useSesion";
+
+/** Lo que Ajustes le deja en el `state` al volver acá después de borrar un
+ *  evento: que se muestre el aviso "Evento borrado." */
+export interface LlegadaTrasBorrar {
+  eventoBorrado: true;
+}
+
+/** El título de la lista vacía: adonde va el foco si se borró el último. */
+const ID_VACIO = "historial-vacio";
 
 /** Lo que devolvió el backend y para qué filtro. Guardar el filtro junto a la
  *  lista permite seguir mostrando la anterior mientras llega la nueva, sin
@@ -53,12 +64,20 @@ interface Resultado {
  * Un admin ve los de todas las cuentas y puede quedarse con los de una. Ese
  * filtro va en la URL (?organizador=ID): así la página de Cuentas linkea "Ver
  * historial" de una cuenta, y recargar no lo pierde.
+ *
+ * Un admin además puede borrar un evento para siempre, con sus fotos y su
+ * video: la segunda excepción a "nada se borra". Va al pie de cada tarjeta,
+ * aparte de las demás acciones, y se confirma escribiendo el nombre del evento.
+ * Desde Ajustes se borra con el mismo diálogo (DialogoBorrarEvento) y se vuelve
+ * acá con el mismo aviso.
  */
 export default function PaginaHistorial() {
   const alPerderSesion = useAlPerderSesion();
   const sesion = useSesion();
   const { usuario, esAdmin } = sesion;
   const [parametros, setParametros] = useSearchParams();
+  const navegar = useNavigate();
+  const { pathname, search, hash, state } = useLocation();
 
   // A un organizador el backend le devuelve los suyos mande lo que mande: ni
   // se manda, y un ?organizador= que le quedó en un link no le cambia nada.
@@ -70,9 +89,82 @@ export default function PaginaHistorial() {
   const [intento, setIntento] = useState(0);
   const [cuentas, setCuentas] = useState<Cuenta[] | null>(null);
 
+  /** Los que se borraron desde esta página. Se sacan al mostrar la lista y no
+   *  de la lista misma: una recarga que salió antes del borrado y llega
+   *  después no los trae de vuelta. */
+  const [borrados, setBorrados] = useState<ReadonlySet<number>>(() => new Set());
+  /** El evento que se está por borrar: el diálogo que pide su nombre. */
+  const [aBorrar, setABorrar] = useState<EventoAdmin | null>(null);
+  const [aviso, setAviso] = useState<{ texto: string; vez: number } | null>(null);
+
+  // Al borrar, la tarjeta sale y la lista se corre hacia arriba: un segundo
+  // toque en "Borrar evento" del diálogo caería sobre el "Borrar evento" de la
+  // tarjeta que quedó debajo del dedo. Medio segundo después de cerrar, esos
+  // botones no responden. Lo mismo que Eliminar definitivamente en Cuentas.
+  const cerradoEn = useRef(0);
+  // El botón que abrió el diálogo ya no existe: el foco va al título del mes
+  // donde estaba el evento, y no se pierde en <body>.
+  const enfocarTras = useRef<string | null>(null);
+
   useEffect(() => {
     document.title = comun.tituloPestana(comun.nav.historial);
   }, []);
+
+  // Se borró desde Ajustes y se vino acá: el mismo aviso que borrando desde
+  // la lista. Después se limpia el `state`, así recargar o volver con "Atrás"
+  // no lo repite.
+  const llegoTrasBorrar = (state as Partial<LlegadaTrasBorrar> | null)?.eventoBorrado === true;
+  useEffect(() => {
+    if (!llegoTrasBorrar) return;
+    setAviso({ texto: t.borrar.hecho, vez: Date.now() });
+    navegar({ pathname, search, hash }, { replace: true, state: null });
+  }, [llegoTrasBorrar, navegar, pathname, search, hash]);
+
+  // El aviso de abajo se va solo.
+  useEffect(() => {
+    if (!aviso) return;
+    const id = window.setTimeout(() => setAviso(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [aviso]);
+
+  // Corre después de que el diálogo se desmonta (y de que intenta devolver el
+  // foco a un botón que ya no está). Sin mover la página: sólo el foco.
+  useEffect(() => {
+    if (aBorrar || !enfocarTras.current) return;
+    const destino =
+      document.getElementById(enfocarTras.current) ??
+      document.querySelector<HTMLElement>("[data-titulo-mes]") ??
+      document.getElementById(ID_VACIO);
+    enfocarTras.current = null;
+    destino?.focus({ preventScroll: true });
+  }, [aBorrar, borrados]);
+
+  function abrirBorrar(evento: EventoAdmin) {
+    if (Date.now() - cerradoEn.current < 500) return;
+    setABorrar(evento);
+  }
+
+  function alBorrar(evento: EventoAdmin) {
+    cerradoEn.current = Date.now();
+    enfocarTras.current = idDelMes(claveDelMes(evento));
+    setBorrados((b) => new Set(b).add(evento.id));
+    // Que el selector de organizador lo cuente: una cuenta que se quedó sin
+    // eventos deja de aparecer, como si se hubiera recargado.
+    setCuentas(
+      (lista) =>
+        lista &&
+        lista.map((c) => (c.id === evento.organizador_id ? { ...c, eventos: Math.max(0, c.eventos - 1) } : c)),
+    );
+    setABorrar(null);
+    setAviso({ texto: t.borrar.hecho, vez: Date.now() });
+  }
+
+  function alCerrarBorrar(yaNoEsta: boolean) {
+    setABorrar(null);
+    // El backend dijo que no existe (lo borró otra persona, desde otra
+    // pestaña): se vuelve a pedir la lista para que tampoco esté acá.
+    if (yaNoEsta) setIntento((n) => n + 1);
+  }
 
   // Se espera a saber quién es antes de pedir: si fuera admin y se pidiera
   // antes, saldría un pedido sin filtro que el siguiente pisa enseguida.
@@ -149,6 +241,7 @@ export default function PaginaHistorial() {
     }
 
     const recargando = cargando || vigente === null;
+    const eventos = resultado.eventos.filter((e) => !borrados.has(e.id));
     return (
       <>
         {error ? (
@@ -158,7 +251,7 @@ export default function PaginaHistorial() {
         ) : null}
 
         <div aria-busy={recargando} className={`transition-opacity ${recargando ? "opacity-60" : ""}`}>
-          {resultado.eventos.length === 0 ? (
+          {eventos.length === 0 ? (
             <Vacio
               titulo={
                 nombreFiltrado
@@ -172,10 +265,13 @@ export default function PaginaHistorial() {
             />
           ) : (
             <ListaPorMes
-              eventos={resultado.eventos}
+              eventos={eventos}
               // Filtrando por una cuenta, repetir su nombre en cada tarjeta no
               // agrega nada.
               conOrganizador={esAdmin && resultado.organizador === undefined}
+              // Sólo un admin borra. A un organizador ni se le ofrece: el
+              // backend le respondería 403.
+              onBorrar={esAdmin ? abrirBorrar : undefined}
             />
           )}
         </div>
@@ -197,7 +293,137 @@ export default function PaginaHistorial() {
       )}
 
       {contenido()}
+
+      {aBorrar && (
+        <DialogoBorrarEvento
+          evento={aBorrar}
+          onBorrado={() => alBorrar(aBorrar)}
+          onCerrar={alCerrarBorrar}
+        />
+      )}
+
+      <AvisoHecho aviso={aviso} />
     </LayoutAdmin>
+  );
+}
+
+// ── Borrar un evento ─────────────────────────────────────────
+
+function mensajeDe(error: unknown): string {
+  return error instanceof ErrorApi ? error.message : comun.errores.generico;
+}
+
+/** Cuánto no responde Borrar después de un error (ver DialogoBorrarEvento). */
+const GRACIA_TRAS_ERROR = 600;
+
+/**
+ * "¿Borrar “…” para siempre?": el diálogo de Borrar evento, el mismo desde el
+ * Historial y desde Ajustes. Hace el pedido él mismo y avisa con `onBorrado`
+ * sólo si salió; quien lo muestra decide qué pasa después (sacar la tarjeta,
+ * volver al Historial).
+ *
+ * Se confirma escribiendo el nombre del evento, y eso escrito, tal cual, es lo
+ * que se le manda al backend para que confirme él también. Un error del
+ * backend queda adentro del diálogo, donde se está mirando, y el diálogo
+ * sigue abierto: si Cloudinary no respondió, o se está armando el video, se
+ * puede probar de nuevo sin volver a escribir. `onCerrar(yaNoEsta)` avisa si
+ * en el medio el backend dijo que el evento ya no existe (404), para que quien
+ * lo muestra se ponga al día.
+ *
+ * Que un reintento sea siempre a propósito: el error va debajo de los botones
+ * (la prop `error` de Confirmar), así al aparecer no los corre y "Borrar
+ * evento" no queda donde estaba Cancelar; y durante `GRACIA_TRAS_ERROR` después
+ * del error, Borrar no responde, por si el dedo ya venía en camino.
+ */
+export function DialogoBorrarEvento({
+  evento,
+  onBorrado,
+  onCerrar,
+}: {
+  evento: EventoAdmin;
+  onBorrado: (respuesta: EventoBorrado) => void;
+  onCerrar: (yaNoEsta: boolean) => void;
+}) {
+  const alPerderSesion = useAlPerderSesion();
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const yaNoEsta = useRef(false);
+  const errorEn = useRef(0);
+
+  async function borrar(escrito: string) {
+    if (Date.now() - errorEn.current < GRACIA_TRAS_ERROR) return;
+    setCargando(true);
+    setError(null);
+    try {
+      const respuesta = await admin.borrarEvento(evento.id, escrito);
+      setCargando(false);
+      onBorrado(respuesta);
+    } catch (e) {
+      setCargando(false);
+      if (alPerderSesion(e)) return;
+      if (e instanceof ErrorApi) {
+        // Sólo se ofrece a un admin: un 403 es que cambió el rol de quien
+        // mira. Se pregunta de nuevo y la página deja de ofrecerlo.
+        if (e.esSinPermiso) revalidarSesion();
+        if (e.http === 404) yaNoEsta.current = true;
+      }
+      errorEn.current = Date.now();
+      setError(e);
+    }
+  }
+
+  const fotos = evento.aprobadas + evento.rechazadas + evento.pendientes;
+
+  return (
+    <Confirmar
+      abierto
+      peligro
+      titulo={t.borrar.titulo(evento.nombre)}
+      mensaje={
+        <>
+          <p className="font-semibold text-texto">{t.borrar.noSeDeshace}</p>
+          <p className="mt-1">
+            {evento.fotos_borradas_en
+              ? t.borrar.yaBorradas
+              : t.borrar.seBorran(fotos, evento.video_url_listo !== null)}
+          </p>
+        </>
+      }
+      error={error ? mensajeDe(error) : null}
+      aEscribir={{ texto: evento.nombre, etiqueta: t.borrar.etiqueta }}
+      textoConfirmar={t.borrar.confirmar}
+      iconoConfirmar={BorrarGrande}
+      cargando={cargando}
+      onConfirmar={(escrito) => void borrar(escrito)}
+      onCancelar={() => onCerrar(yaNoEsta.current)}
+    />
+  );
+}
+
+/** Aviso de lo que se acaba de hacer, abajo y solo por unos segundos, como en
+ *  Cuentas. En el celular va por encima de la barra de pestañas de abajo.
+ *
+ *  `!bg-sombra/75`: el 40 % de `.vidrio-oscuro` está pensado para ir sobre una
+ *  foto; sobre la página clara, el blanco quedaba en 3,3:1. Con 75 % pasa de
+ *  10:1 en claro y en oscuro no cambia. Lleva `!` porque `.vidrio-oscuro` es
+ *  de `@layer utilities` y sale después: sin él, gana su 40 %. */
+function AvisoHecho({ aviso }: { aviso: { texto: string; vez: number } | null }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed inset-x-0 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-30 flex justify-center px-4 md:bottom-8"
+    >
+      {aviso && (
+        <p
+          key={aviso.vez}
+          className="vidrio-oscuro !bg-sombra/75 flex items-center gap-2 rounded-full px-5 py-3 text-sm font-medium text-luz"
+        >
+          <CheckCircleIcon aria-hidden className="h-5 w-5 shrink-0 text-verde" />
+          <span className="min-w-0">{aviso.texto}</span>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -265,7 +491,16 @@ function FiltroOrganizador({
 
 // ── Lista ────────────────────────────────────────────────────
 
-function ListaPorMes({ eventos, conOrganizador }: { eventos: EventoAdmin[]; conOrganizador: boolean }) {
+function ListaPorMes({
+  eventos,
+  conOrganizador,
+  onBorrar,
+}: {
+  eventos: EventoAdmin[];
+  conOrganizador: boolean;
+  /** Sólo si quien mira es admin. */
+  onBorrar?: (evento: EventoAdmin) => void;
+}) {
   const grupos = useMemo(() => agruparPorMes(eventos), [eventos]);
   // Si se entra a Ajustes o a Revisar desde acá, esas páginas leen este estado
   // para volver al historial (con el filtro) y no a los eventos vigentes.
@@ -275,8 +510,14 @@ function ListaPorMes({ eventos, conOrganizador }: { eventos: EventoAdmin[]; conO
   return (
     <div className="flex flex-col gap-8">
       {grupos.map((g) => (
-        <section key={g.clave} aria-labelledby={`mes-${g.clave}`}>
-          <h2 id={`mes-${g.clave}`} className="mb-3 px-1 text-lg font-semibold">
+        <section key={g.clave} aria-labelledby={idDelMes(g.clave)}>
+          {/* tabIndex -1: recibe el foco después de borrar un evento del mes. */}
+          <h2
+            id={idDelMes(g.clave)}
+            data-titulo-mes=""
+            tabIndex={-1}
+            className="mb-3 px-1 text-lg font-semibold outline-none"
+          >
             {g.titulo}
           </h2>
           <ul className="flex flex-col gap-3">
@@ -286,6 +527,9 @@ function ListaPorMes({ eventos, conOrganizador }: { eventos: EventoAdmin[]; conO
                 evento={e}
                 conOrganizador={conOrganizador}
                 volver={volver}
+                // Por las dudas, sólo si es del Historial con la regla de hoy:
+                // uno que no lo fuera, el backend no lo borra.
+                onBorrar={onBorrar && esDelHistorial(e) ? () => onBorrar(e) : undefined}
               />
             ))}
           </ul>
@@ -299,10 +543,12 @@ function TarjetaEvento({
   evento: e,
   conOrganizador,
   volver,
+  onBorrar,
 }: {
   evento: EventoAdmin;
   conOrganizador: boolean;
   volver: DesdeLista;
+  onBorrar?: () => void;
 }) {
   const hayFotos = e.aprobadas + e.rechazadas + e.pendientes > 0;
   // Con las fotos borradas (o desde el día del borrado, aunque la limpieza no
@@ -370,9 +616,39 @@ function TarjetaEvento({
           {comun.verbos.ajustes}
         </Link>
       </div>
+
+      {/* Aparte, al pie y después de una línea: es la única acción de la
+          tarjeta que no tiene vuelta atrás, y no se tiene que poder tocar
+          yendo a Ajustes. Sin fondo ni borde, como el "Eliminar" de los
+          Ajustes de iOS y el "Eliminar definitivamente" de Cuentas, y a la
+          izquierda, lejos del pulgar derecho. */}
+      {onBorrar && (
+        <div className="mt-4 border-t border-borde pt-3">
+          {/* Nunca deshabilitado mientras el diálogo está abierto: el foco se
+              iría a <body> y Cancelar no podría devolverlo acá. El diálogo ya
+              tapa todo, y el medio segundo de gracia evita el doble toque. */}
+          <button
+            type="button"
+            onClick={onBorrar}
+            aria-label={t.borrar.accionDe(e.nombre)}
+            className={CLASE_BORRAR}
+          >
+            <TrashIcon aria-hidden className={claseIconoChico} />
+            {t.borrar.accion}
+          </button>
+        </div>
+      )}
     </li>
   );
 }
+
+/** Rojo, sin fondo ni borde, con los 44 px de alto de todo botón chico. El
+ *  -ml-3 alinea el ícono con el texto de la tarjeta. Igual que en Cuentas. */
+const CLASE_BORRAR =
+  "-ml-3 inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-rojo-tinta " +
+  "transition hover:bg-pulsado active:scale-[0.97] " +
+  "disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 " +
+  "focus:outline-none focus-visible:ring-2 focus-visible:ring-acento";
 
 /** Tres números, como los resúmenes de Salud o de Fitness: el número grande,
  *  qué es debajo. Lo sin revisar va en naranja porque es lo único que pide
@@ -453,7 +729,10 @@ function Vacio({ titulo, filtrado, onVerTodos }: { titulo: string; filtrado: boo
       {/* El símbolo grande arriba, como los estados vacíos de iOS: el mismo
           reloj de la pestaña Historial. */}
       <ClockIcon aria-hidden className="h-10 w-10 text-tenue" />
-      <h2 className="text-lg font-semibold leading-snug">{titulo}</h2>
+      {/* tabIndex -1: recibe el foco si se borró el último evento. */}
+      <h2 id={ID_VACIO} tabIndex={-1} className="text-lg font-semibold leading-snug outline-none">
+        {titulo}
+      </h2>
       <p className="max-w-sm leading-snug text-tenue">{filtrado ? t.vacio.textoFiltrado : t.vacio.texto}</p>
       <div className="mt-2">
         {filtrado ? (
@@ -498,12 +777,22 @@ interface Grupo {
   eventos: EventoAdmin[];
 }
 
+/** "2026-09": de qué mes es un evento. */
+function claveDelMes(evento: EventoAdmin): string {
+  return evento.fecha_evento.slice(0, 7);
+}
+
+/** El id del título de un mes: `mes-2026-09`. */
+function idDelMes(clave: string): string {
+  return `mes-${clave}`;
+}
+
 /** El backend ya los manda del más reciente al más viejo; un Map conserva ese
  *  orden y, si algún día no vinieran ordenados, igual no repite meses. */
 function agruparPorMes(eventos: EventoAdmin[]): Grupo[] {
   const grupos = new Map<string, Grupo>();
   for (const e of eventos) {
-    const clave = e.fecha_evento.slice(0, 7);
+    const clave = claveDelMes(e);
     const grupo = grupos.get(clave);
     if (grupo) grupo.eventos.push(e);
     else grupos.set(clave, { clave, titulo: tituloDeMes(clave), eventos: [e] });

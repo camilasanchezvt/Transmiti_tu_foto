@@ -395,7 +395,8 @@ class ErrorVideo(Exception):
 
 
 # ─────────────────────────────────────────────────────────────
-# Borrado de los archivos de un evento (lo usa app/limpieza.py)
+# Borrado de los archivos de un evento (lo usan app/limpieza.py y borrar un
+# evento del Historial, en routers/admin.py)
 # ─────────────────────────────────────────────────────────────
 
 # Las fotos son `image` y los videos del evento, `video`. Los dos viven en la
@@ -412,8 +413,9 @@ _CODIGO_SEGURO = re.compile(r"[A-Za-z0-9_-]+")
 
 
 class ErrorBorrado(Exception):
-    """Cloudinary no contestó o contestó con error. El evento no se marca y la
-    próxima pasada de limpieza lo vuelve a intentar."""
+    """Cloudinary no contestó o contestó con error. En la limpieza, el evento no
+    se marca y la próxima pasada lo vuelve a intentar; al borrar un evento del
+    Historial, no se borra nada de la base y el panel puede volver a probar."""
 
 
 def prefijo_del_evento(codigo_publico: str) -> str:

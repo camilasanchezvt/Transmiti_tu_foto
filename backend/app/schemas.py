@@ -36,6 +36,11 @@ MaxFotosPorDispositivo = Annotated[int, Field(ge=1, le=50)]
 # así "   " cuenta como vacío y no como un nombre de tres caracteres.
 NombreCuenta = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 
+# El nombre de un evento, igual: recortado antes de medir. Un nombre de puros
+# espacios quedaría guardado como "" y dejaría sin efecto la confirmación
+# escrita de Borrar evento (el nombre vacío "coincidiría" con un campo vacío).
+NombreEvento = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)]
+
 # Un email normalizado: sin espacios y en minúsculas, que es como se guarda y se
 # compara. El formato se valida con un patrón simple a propósito: validar de
 # verdad pide la librería email-validator, que no está en el stack (regla 10), y
@@ -224,7 +229,7 @@ class EventoNuevo(BaseModel):
     genérico y éste tiene que decir "Revisá el año".
     """
 
-    nombre: str = Field(min_length=1, max_length=120)
+    nombre: NombreEvento
     fecha_evento: date = Field(description="No puede ser de hace 30 días o más (hoy de Argentina)")
     organizador_id: int | None = None
 
@@ -615,6 +620,31 @@ class CuentaEliminada(BaseModel):
     cuenta eliminada pasaron a la cuenta del superadmin que la eliminó."""
 
     eventos_transferidos: int = Field(examples=[3])
+
+
+class PedidoBorrarEvento(BaseModel):
+    """Cuerpo de DELETE /api/admin/eventos/{id}. Admin o superadmin.
+
+    `confirmar_nombre` es el nombre del evento, escrito a mano: la confirmación
+    se hace también del lado del servidor, no sólo en el diálogo del panel. Se
+    compara como se ve en pantalla: sin mayúsculas, sin espacios alrededor, con
+    los espacios de adentro juntados en uno y las tildes en una sola forma
+    (NFC). Así un id mal puesto (un pedido a mano, un panel viejo) no borra el
+    evento equivocado.
+
+    Cualquier cosa que no sea el nombre del evento responde "El nombre no
+    coincide con el del evento", también un texto vacío (o de puros espacios).
+    """
+
+    confirmar_nombre: str = Field(max_length=200, examples=["Cumple de 15 de Malena"])
+
+
+class EventoBorrado(BaseModel):
+    """Respuesta 200 de DELETE /api/admin/eventos/{id}: el evento ya no existe, y
+    `fotos` es cuántas filas de fotos tenía (se borraron con él)."""
+
+    eliminado: Literal[True]
+    fotos: int = Field(examples=[182])
 
 
 # ─────────────────────────────────────────────────────────────

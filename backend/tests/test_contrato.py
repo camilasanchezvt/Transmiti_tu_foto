@@ -102,7 +102,7 @@ AGREGADOS = [
     # reactivarlas o cambiarles el rol. Dar de baja reemplaza a borrar.
     ("GET", "/api/admin/cuentas"),
     ("PATCH", "/api/admin/cuentas/{id_cuenta}"),
-    # Eliminar una cuenta para siempre (26-sep-2026): la única excepción a
+    # Eliminar una cuenta para siempre (26-sep-2026): la primera excepción a
     # "nada se borra", sólo para superadmins. Sus eventos pasan a quien la
     # elimina, y el email de la cuenta se confirma en el cuerpo, no en la URL.
     ("DELETE", "/api/admin/cuentas/{id_cuenta}"),
@@ -121,6 +121,10 @@ AGREGADOS = [
     ("POST", "/api/admin/yo/avatar/firma"),
     ("PUT", "/api/admin/yo/avatar"),
     ("POST", "/api/admin/yo/avatar/quitar"),
+    # Borrar un evento del Historial (27-sep-2026): la segunda excepción a
+    # "nada se borra", para admins y superadmins. Se va el evento con sus fotos
+    # (filas y archivos de Cloudinary), y el nombre se confirma en el cuerpo.
+    ("DELETE", "/api/admin/eventos/{id_evento}"),
 ]
 
 
@@ -166,7 +170,7 @@ def test_no_hay_endpoints_inventados(cliente):
 def test_los_agregados_estan_publicados(cliente):
     """Si alguno desaparece, se perdió algo que se agregó a propósito: la
     vinculación por código corto, el video, las cuentas, eliminarlas, recuperar
-    la contraseña o Mi cuenta."""
+    la contraseña, Mi cuenta o borrar un evento del Historial."""
     rutas = rutas_publicadas(cliente)
     faltan = [x for x in AGREGADOS if x not in rutas]
     assert faltan == [], faltan
@@ -243,6 +247,7 @@ RUTAS_PROTEGIDAS = [
     ("post", "/api/admin/yo/avatar/firma"),
     ("put", "/api/admin/yo/avatar"),
     ("post", "/api/admin/yo/avatar/quitar"),
+    ("delete", "/api/admin/eventos/1"),
 ]
 
 

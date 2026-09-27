@@ -94,10 +94,11 @@ app = FastAPI(
     lifespan=ciclo_de_vida,
 )
 
-# DELETE lo usa un solo endpoint: eliminar una cuenta para siempre
-# (DELETE /api/admin/cuentas/{id}, sólo superadmin). PUT, otro: guardar el
-# avatar (PUT /api/admin/yo/avatar). Sin ellos en la lista, el navegador corta
-# el pedido en el preflight y el panel no llega a mandarlo.
+# DELETE lo usan dos endpoints: eliminar una cuenta para siempre
+# (DELETE /api/admin/cuentas/{id}, sólo superadmin) y borrar un evento del
+# Historial (DELETE /api/admin/eventos/{id}, admin o superadmin). PUT, uno:
+# guardar el avatar (PUT /api/admin/yo/avatar). Sin ellos en la lista, el
+# navegador corta el pedido en el preflight y el panel no llega a mandarlo.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.origenes_cors,

@@ -16,9 +16,10 @@ Quién gestiona a quién (la matriz completa está en `_exigir_permiso`):
 Nada se borra: dar de baja es un estado. La cuenta no puede entrar, pero sus
 eventos y fotos quedan, los admins los siguen viendo y se puede reactivar.
 
-La única excepción a la regla 7 es `eliminar_cuenta`, sólo para superadmins:
-borra la fila de la cuenta para siempre y sus eventos pasan a quien la elimina
-(ver el docstring del endpoint).
+`eliminar_cuenta` es una de las dos excepciones a la regla 7 (la otra es
+borrar un evento del Historial), sólo para superadmins: borra la fila de la
+cuenta para siempre y sus eventos pasan a quien la elimina (ver el docstring
+del endpoint).
 
 Nadie cambia su propio rol ni su propio estado. Así el sistema nunca se queda
 sin admins por un clic de más, y nadie se bloquea solo. El nombre propio sí.
@@ -471,7 +472,8 @@ def eliminar_cuenta(
     db: Session = Depends(get_db),
     actor: Usuario = Depends(solo_superadmin),
 ) -> CuentaEliminada:
-    """La única excepción a "nada se borra" (regla 7), y sólo para superadmins.
+    """Una de las dos excepciones a "nada se borra" (regla 7; la otra es borrar
+    un evento del Historial), y sólo para superadmins.
 
     Se borra la fila de `usuarios` y nada más: el nombre, el email y la
     contraseña (y con ella sus pedidos de recuperación de contraseña, por ON

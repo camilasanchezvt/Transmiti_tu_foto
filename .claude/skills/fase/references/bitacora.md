@@ -486,9 +486,8 @@ endpoint nuevo, en `AGREGADOS`. Sin migración: no cambia ninguna tabla.
   entero; si no, se apilan. Después de eliminar, el botón de eliminar ignora
   toques durante 500 ms (la lista se corre y otra tarjeta queda bajo el dedo)
   y el foco va al título de la sección donde estaba la cuenta.
-- `CLAUDE.md` sigue diciendo "7. Nada se borra." sin la excepción: no es un
-  archivo de este cambio. Hay que agregarle la excepción a mano (la sección 11
-  de CONSTRUIR-APP.md ya tiene el texto).
+- La regla 7 de `CLAUDE.md` ya lleva esta excepción (y desde el 27-sep-2026,
+  también la de borrar un evento del Historial).
 
 ### Mi cuenta, olvidé mi contraseña y el estilo de la pantalla
 **Fuera de fase, 26-sep-2026.** Decisión de la usuaria. El contrato está en la
@@ -610,6 +609,96 @@ en la sección 8 de CONSTRUIR-APP.md (*Temas*); acá, el porqué.
   cambia sólo el fragmento: el navegador no recarga y la página seguía con el
   token viejo y dejaba el nuevo a la vista. Ahora la página se vuelve a montar
   con la `key` del fragmento que ve React Router.
+
+### Borrar un evento del Historial: la segunda excepción a "nada se borra"
+**Fuera de fase, 27-sep-2026.** Decisión de la usuaria ("que los admin puedan
+borrar eventos viejos"). El contrato está en la sección 5 de CONSTRUIR-APP.md
+(fila de `DELETE /api/admin/eventos/{id}` y *Borrar un evento del Historial*);
+el panel, en la sección 8. Acá va el porqué. Un endpoint nuevo, en
+`AGREGADOS`. Sin migración: `fotos.evento_id` ya tenía `ON DELETE CASCADE`.
+
+- **Admin y superadmin, de cualquier cuenta; organizador nunca.** Es limpieza
+  del sistema, no del evento propio: un organizador que se equivoca de evento
+  pierde fotos de una fiesta que no se repite. Por eso 403 aunque el evento
+  sea suyo, y el 403 va antes que todo (tampoco dice si el id existe).
+- **Sólo del Historial, con el MISMO criterio que el listado.** El criterio se
+  sacó de `listar_eventos` a `del_historial(hoy)` en `routers/admin.py`, y el
+  borrado lo evalúa en el mismo `SELECT … FOR UPDATE` que toma el evento: una
+  sola definición, con el mismo "hoy" (`routers.admin.hoy_en_argentina`). Un
+  abierto de fecha pasada no se borra (regla de medianoche: la fiesta puede
+  seguir); primero se termina. El panel usa `esDelHistorial` de
+  `admin/navegacion.ts`, que es la misma regla del lado del navegador.
+- **Se va TODO, de verdad.** Filas de fotos y del evento (el video son
+  columnas de esa fila), los archivos de Cloudinary y los códigos cortos de
+  vinculación vivos (en memoria: `vinculacion.anular_del_evento`). Un código
+  vivo seguía entregando el token de un evento que ya no existía. Las fotos se
+  borran con su propio DELETE antes que el evento, aunque la clave tenga
+  CASCADE: así el número de la respuesta sale del DELETE. La prueba
+  `test_no_queda_ninguna_fila_colgada` lee del catálogo de Postgres TODAS las
+  claves foráneas hacia `eventos` y falla si aparece una nueva, para que quien
+  agregue una tabla se acuerde de borrarla también.
+- **Cloudinary antes que la base, y si falla no se borra nada (503).** Al
+  revés, un Cloudinary caído dejaba archivos sin ninguna fila que los nombre:
+  nadie los volvería a borrar. Así, el evento sigue en el Historial y se puede
+  volver a probar; borrar lo que ya no está no es error. El 503 lleva
+  `DATOS_INVALIDOS` porque el contrato no tiene un código de "servicio caído"
+  y no se inventan códigos (sección 5); el panel muestra el mensaje tal cual.
+  Límite conocido: si la base fallara DESPUÉS de que Cloudinary borró (con el
+  evento tomado no hay con qué chocar, pero una caída de red es posible),
+  quedan las filas con los archivos ya borrados; reintentar lo resuelve.
+- **Mismo borrado que la limpieza.** `borrar_archivos_del_evento`: prefijo con
+  barra final, imágenes y videos, paginado, `invalidate`. Con
+  `fotos_borradas_en` puesto no se llama: esos archivos ya no existen. Sin
+  marca, sí, aunque ya sea el día del borrado: la pasada puede no haber corrido.
+- **`FOR UPDATE` y no `FOR NO KEY UPDATE` como la limpieza.** Borrar la fila
+  necesita el lock fuerte, y además frena el alta de una foto (FOR KEY SHARE):
+  espera y después falla por la clave foránea, en vez de quedar colgada. El
+  lock dura también lo que tarda Cloudinary: así la pasada (SKIP LOCKED) lo
+  saltea en vez de pedir el mismo borrado en paralelo, y si la pasada lo tenía
+  primero, el borrado espera y ve su `fotos_borradas_en`. Las cuatro carreras
+  (pasada primero, borrado primero, dos borrados, foto que llega) tienen su
+  prueba con hilos, esperando el lock en `pg_stat_activity`.
+- **Confirmación por nombre del lado del servidor**, como el email al
+  eliminar una cuenta, pero comparando el nombre como se ve:
+  `_nombre_comparable` (NFC, sin espacios alrededor, los de adentro juntados
+  en uno, `lower`) es exactamente `normalizar` de `comp/Confirmar.tsx`. El
+  navegador junta los espacios al mostrar el nombre, así que un espacio doble
+  no se ve ni se puede copiar; y una "é" pegada desde macOS llega en NFD. Con
+  `strip().lower()` esos eventos no se podían borrar desde el panel. `lower` y
+  no `casefold`, para no aceptar en el servidor lo que el panel no habilita.
+- **Vacío nunca coincide.** Un evento de nombre en blanco se borraba con el
+  campo vacío, sin escribir nada. Ahora `EventoNuevo.nombre` es `NombreEvento`
+  (recortado antes de medir, mínimo 1), y tanto el servidor como el diálogo
+  rechazan un `confirmar_nombre` vacío aunque el nombre guardado lo sea (de
+  antes de este cambio).
+- **Un video armándose frena el borrado (422).** Cloudinary deja el MP4 en la
+  carpeta minutos después del pedido: si el borrado por prefijo pasaba antes,
+  el video quedaba publicado sin fila que lo recuerde. `_video_en_curso` es la
+  regla común de `armar_video` y `borrar_evento`; si está `procesando`, se le
+  pregunta a Cloudinary y, si ya está, se sigue (y se llama al borrado aunque
+  las fotos ya se hubieran borrado a los 30 días). `armar_video` toma ahora la
+  fila (`FOR NO KEY UPDATE`) antes de pedirle nada a Cloudinary: con el
+  borrado en curso espera y da 404 sin pedir el video, y un doble toque pide
+  uno solo.
+- **El diálogo, pensado para el pulgar.** El error va DEBAJO de los botones
+  (prop `error` de `Confirmar`): con el diálogo anclado arriba, si fuera
+  arriba los empujaría y *Borrar evento* quedaría donde estaba *Cancelar*.
+  Después de un error, 600 ms en que *Borrar evento* no responde y el foco
+  vuelve a *Cancelar* (sin eso quedaba en `<body>` y Tab salía del diálogo).
+  El nombre a copiar se parte entre palabras (`break-words`, antes
+  `break-all`: "Fernánde / z" invitaba a escribir un espacio de más). El
+  aviso "Evento borrado." (y el de Cuentas) pasó a `!bg-sombra/75`: con el 40 %
+  de `.vidrio-oscuro` el blanco quedaba en 3,3:1 sobre la página clara. El
+  verbo vive en `comun.verbos.borrarEvento`, como "Descargar video".
+- **Log `eventos:`** (hijo del de uvicorn, como `limpieza:` y `cuentas:`): quién,
+  qué evento, cuántas fotos y cuántos archivos de Cloudinary, o que ya no
+  tenía. Ni el nombre del evento ni su código público: con el código se podría
+  volver a llegar a lo que se acaba de borrar.
+- **Límite conocido, el mismo de la limpieza:** una firma de subida emitida
+  cuando el evento estaba abierto vale una hora en Cloudinary. Si un invitado
+  la usa después del borrado, esa imagen queda en la carpeta sin fila. Para
+  llegar al Historial el evento tiene que estar terminado, así que en la
+  práctica ya no hay firmas nuevas.
 
 ---
 

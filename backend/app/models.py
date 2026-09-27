@@ -5,11 +5,14 @@ Convenciones de la sección 4 de CONSTRUIR-APP.md:
   servidor está en UTC y el evento en Argentina.
 - Los estados son text con CHECK, no tipos ENUM.
 - Nada se borra: una foto rechazada sigue existiendo y se puede revertir. Una
-  cuenta tampoco se borra: se da de baja, y sus eventos y fotos quedan. La
-  única excepción: un superadmin puede eliminar una cuenta para siempre, y sus
-  eventos pasan a él (DELETE /api/admin/cuentas/{id}, routers/cuentas.py).
-  Con la cuenta se van también sus pedidos de recuperación de contraseña
-  (ON DELETE CASCADE): son datos de la persona, no de ningún evento.
+  cuenta tampoco se borra: se da de baja, y sus eventos y fotos quedan. Hay
+  dos excepciones:
+  - un superadmin puede eliminar una cuenta para siempre, y sus eventos pasan
+    a él (DELETE /api/admin/cuentas/{id}, routers/cuentas.py). Con la cuenta
+    se van también sus pedidos de recuperación de contraseña (ON DELETE
+    CASCADE): son datos de la persona, no de ningún evento;
+  - un admin o un superadmin puede borrar un evento del Historial, y se va con
+    sus fotos (DELETE /api/admin/eventos/{id}, routers/admin.py).
 """
 
 from __future__ import annotations
@@ -222,6 +225,8 @@ class Evento(Base):
     )
 
     usuario: Mapped[Usuario] = relationship(back_populates="eventos")
+    # `fotos.evento_id` es la única clave foránea hacia `eventos`. Borrar un
+    # evento del Historial borra primero sus fotos y después el evento.
     fotos: Mapped[list["Foto"]] = relationship(
         back_populates="evento", cascade="all, delete-orphan"
     )

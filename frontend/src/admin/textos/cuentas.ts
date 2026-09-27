@@ -110,8 +110,9 @@ export const textosCuentas = {
   } satisfies Record<AccionConfirmada, Confirmacion>,
 
   /**
-   * Eliminar definitivamente: la única excepción a "nada se borra". Sólo lo ve
-   * una superadmin, y nunca sobre otra superadmin ni sobre la propia cuenta.
+   * Eliminar definitivamente: una de las dos excepciones a "nada se borra" (la
+   * otra es borrar un evento del Historial). Sólo lo ve una superadmin, y
+   * nunca sobre otra superadmin ni sobre la propia cuenta.
    * Se borran el nombre, el email y la contraseña; los eventos, con fotos y
    * videos, pasan a la cuenta de quien elimina. Se confirma escribiendo el
    * email de la cuenta.

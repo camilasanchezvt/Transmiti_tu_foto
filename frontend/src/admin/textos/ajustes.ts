@@ -1,7 +1,8 @@
 // Textos de Ajustes del evento (antes "Cierre").
 //
 // La página va ordenada por momento: antes, durante y después del evento, y al
-// final el estado (Terminar o, si ya terminó, Reabrir). Arriba de todo, desde
+// final el estado (Terminar o, si ya terminó, Reabrir) y, para un admin en un
+// evento del Historial, Borrar el evento. Arriba de todo, desde
 // una semana antes de que se borren las fotos y el video, el aviso. Quien la abre suele estar apurado y con el celular: frases
 // cortas, y cada botón dice lo que hace. Los verbos compartidos (Publicar,
 // Descargar, Revisar fotos, Guardar…) viven en comun.ts; acá, lo propio.
@@ -144,4 +145,12 @@ export const ajustes = {
   terminadoBorrandoAviso:
     "No recibe fotos y la pantalla ya no muestra ninguna. Como las fotos se están borrando, ya no se puede reabrir.",
   reabrir: "Reabrir",
+
+  // ── Borrar el evento ─────────────────────────────────────
+  // Sólo lo ve un admin, y sólo en un evento del Historial. Al final de todo y
+  // aparte, como el estado. El diálogo es el mismo del Historial: sus textos
+  // viven en historial.ts (`borrar`); el verbo, en comun.ts.
+  borrarTitulo: "Borrar el evento",
+  borrarDetalle: "Se borra para siempre, con todo lo que tiene. No se puede deshacer.",
+  borrarAccion: comun.verbos.borrarEvento,
 } as const;

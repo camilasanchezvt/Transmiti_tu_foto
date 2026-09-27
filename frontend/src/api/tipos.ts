@@ -167,6 +167,27 @@ export interface EventoAdmin {
   pantalla_mostrar_qr: boolean;
 }
 
+/** Cuerpo de DELETE /api/admin/eventos/{id}: la segunda excepción a "nada se
+ *  borra", junto con eliminar una cuenta. Sólo admin y superadmin, y sólo un
+ *  evento del Historial (terminado, o sin publicar con la fecha ya pasada en
+ *  Argentina); uno abierto, de cualquier fecha, responde 422. `confirmar_nombre`
+ *  tiene que ser el nombre del evento como se ve (sin mayúsculas, sin espacios
+ *  alrededor, los de adentro juntados en uno, tildes en NFC: `normalizar` de
+ *  comp/Confirmar) y no vacío, o 422. Con su video armándose, también 422. En
+ *  cada rechazo no se borra nada. */
+export interface PedidoBorrarEvento {
+  confirmar_nombre: string;
+}
+
+/** Respuesta de DELETE /api/admin/eventos/{id}. Se borraron el evento, sus
+ *  fotos y todo lo que lo nombraba, y de Cloudinary sus imágenes y videos (si
+ *  no se habían borrado ya a los 30 días). `fotos`: cuántas tenía. Desde ahí,
+ *  su código público y su token de pantalla dan 404. */
+export interface EventoBorrado {
+  eliminado: true;
+  fotos: number;
+}
+
 /** Query de GET /api/admin/eventos. Sin alcance vienen todos. Regla de
  *  medianoche (hoy = Argentina):
  *  vigentes = abiertos de cualquier fecha + sin publicar de hoy en adelante;
@@ -269,8 +290,9 @@ export interface CambioCuenta {
   nombre?: string;
 }
 
-/** Cuerpo de DELETE /api/admin/cuentas/{id}: la única excepción a "nada se
- *  borra", y sólo para una superadmin. El email va en el cuerpo y no en la
+/** Cuerpo de DELETE /api/admin/cuentas/{id}: una de las dos excepciones a
+ *  "nada se borra" (la otra es borrar un evento del Historial), y sólo para
+ *  una superadmin. El email va en el cuerpo y no en la
  *  URL; tiene que coincidir con el de la cuenta (sin distinguir mayúsculas ni
  *  espacios alrededor) o el backend responde 422 y no borra nada. Ni una
  *  superadmin ni la propia cuenta se eliminan. */

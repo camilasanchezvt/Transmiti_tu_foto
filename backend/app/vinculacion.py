@@ -99,6 +99,17 @@ def canjear(codigo: str) -> str | None:
     return vinculacion.token_pantalla if vinculacion else None
 
 
+def anular_del_evento(evento_id: int) -> int:
+    """Quema los códigos vivos de un evento. Lo usa borrar un evento del
+    Historial: un código generado antes no tiene que seguir entregando el token
+    de un evento que ya no existe. Devuelve cuántos quemó."""
+    with _candado:
+        codigos = [c for c, v in _por_codigo.items() if v.evento_id == evento_id]
+        for codigo in codigos:
+            del _por_codigo[codigo]
+    return len(codigos)
+
+
 def reiniciar() -> None:
     """Sólo para las pruebas."""
     with _candado:

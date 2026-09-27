@@ -27,14 +27,22 @@ interface Props {
   cargando?: boolean;
   /**
    * Confirmación escrita, para lo que no tiene vuelta atrás de ninguna forma
-   * (eliminar una cuenta). Debajo del mensaje va un campo con `etiqueta`, y
-   * debajo de la etiqueta, destacado, el `texto` a escribir. Confirmar queda
-   * deshabilitado hasta que lo escrito coincida, sin distinguir mayúsculas ni
-   * espacios alrededor. El foco arranca en el campo y Enter confirma sólo si
-   * coincide. `teclado: "email"` abre el teclado con @ en el celular. Sin
-   * esto, el diálogo es el de siempre.
+   * (eliminar una cuenta, borrar un evento). Debajo del mensaje va un campo con
+   * `etiqueta`, y debajo de la etiqueta, destacado, el `texto` a escribir.
+   * Confirmar queda deshabilitado hasta que lo escrito coincida con lo que se
+   * ve (ver `normalizar`); vacío no coincide nunca. El foco arranca en el campo
+   * y Enter confirma sólo si coincide. `teclado: "email"` abre el teclado con @
+   * en el celular. Sin esto, el diálogo es el de siempre.
    */
   aEscribir?: { texto: string; etiqueta: string; teclado?: "text" | "email" };
+  /**
+   * El error de la acción, si falló y el diálogo sigue abierto para reintentar.
+   * Va donde no mueve los botones en el celular: con `aEscribir` el diálogo
+   * está anclado arriba, así que va DEBAJO de los botones; sin campo está
+   * anclado abajo y va arriba de ellos. Si empujara los botones, el de
+   * confirmar quedaría justo donde estaba Cancelar, bajo el pulgar.
+   */
+  error?: ReactNode;
   /** Recibe lo que se escribió en el campo, tal cual (sin campo, ""): con
    *  `aEscribir`, eso es lo que se le manda al backend para que confirme él
    *  también, y no el texto que ya se sabía. */
@@ -45,10 +53,20 @@ interface Props {
 /** Los dos botones, desde sm: ver el comentario donde se usan. */
 const BOTON_EN_FILA = "sm:min-w-fit sm:flex-1";
 
-/** Cómo se compara lo escrito: "  Ana@Mail.com " vale por "ana@mail.com". El
- *  backend compara igual (el email de la cuenta, sin mayúsculas ni espacios). */
+/**
+ * Cómo se compara lo escrito: como se ve. Sin mayúsculas, sin espacios
+ * alrededor, con los de adentro juntados en uno y las tildes en una sola forma
+ * (NFC: una "é" pegada desde macOS viene en dos caracteres). El navegador junta
+ * los espacios al mostrar el texto, así que un espacio doble no se ve ni se
+ * puede copiar, y en el celular dos espacios seguidos escriben ". ".
+ * "  Ana@Mail.com " vale por "ana@mail.com"; "Boda  de Ana", por "boda de ana".
+ *
+ * El backend compara igual: `_nombre_comparable` al borrar un evento. Al
+ * eliminar una cuenta compara sin mayúsculas ni espacios alrededor, que para
+ * un email (sin espacios adentro, en ASCII) es lo mismo.
+ */
 function normalizar(texto: string): string {
-  return texto.trim().toLowerCase();
+  return texto.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 /**
@@ -81,6 +99,7 @@ function Dialogo({
   iconoConfirmar,
   cargando = false,
   aEscribir,
+  error,
   onConfirmar,
   onCancelar,
 }: Props) {
@@ -90,8 +109,12 @@ function Dialogo({
   const idCampo = useId();
   const [escrito, setEscrito] = useState("");
 
-  // Sin confirmación escrita, se puede confirmar siempre.
-  const coincide = !aEscribir || normalizar(escrito) === normalizar(aEscribir.texto);
+  // Sin confirmación escrita, se puede confirmar siempre. Con ella, lo vacío
+  // no coincide nunca: un texto a escribir en blanco no habilita Confirmar
+  // apenas se abre el diálogo.
+  const normalizado = normalizar(escrito);
+  const coincide =
+    !aEscribir || (normalizado !== "" && normalizado === normalizar(aEscribir.texto));
 
   // Se leen por ref para no volver a enganchar el teclado en cada render: la
   // página suele pasar una flecha nueva cada vez.
@@ -131,6 +154,25 @@ function Dialogo({
       previo?.focus?.();
     };
   }, []);
+
+  // Mientras se espera, los dos botones se deshabilitan y el que tenía el foco
+  // (se confirmó con un toque o un clic) lo pierde: queda en <body>, afuera, y
+  // Tab se iría a la página de atrás. Si el diálogo sigue abierto cuando
+  // termina, es que falló y se puede reintentar: el foco vuelve a Cancelar. Un
+  // Enter de más no reintenta, y si se había confirmado con Enter desde el
+  // campo, en el celular se cierra el teclado, que taparía el error (va debajo
+  // de los botones). Sólo al terminar una espera: al abrir, el foco es el del
+  // efecto de arriba.
+  const esperaba = useRef(cargando);
+  useEffect(() => {
+    const termino = esperaba.current && !cargando;
+    esperaba.current = cargando;
+    const caja = dialogo.current;
+    if (!termino || !caja) return;
+    const enfocado = document.activeElement;
+    const enUnBoton = caja.contains(enfocado) && !(enfocado as HTMLElement).hasAttribute("data-escribir");
+    if (!enUnBoton) caja.querySelector<HTMLElement>("[data-cancelar]")?.focus();
+  }, [cargando]);
 
   // El foco no se escapa del diálogo con Tab: da la vuelta entre el campo y
   // los botones.
@@ -201,11 +243,14 @@ function Dialogo({
         {aEscribir && (
           <div className="mt-5">
             {/* La etiqueta incluye el texto a escribir: un lector de pantalla
-                lee las dos cosas al llegar al campo. break-all: un email largo
-                no tiene dónde partirse y desbordaría a 375 px. */}
+                lee las dos cosas al llegar al campo. break-words y no
+                break-all: el nombre de un evento se parte entre palabras
+                ("Fernánde / z" invitaba a escribir un espacio de más), y sólo
+                se parte una palabra que no entra sola en el renglón, como un
+                email largo, que si no desbordaría a 375 px. */}
             <label htmlFor={idCampo} className="block text-sm leading-snug text-tenue">
               {aEscribir.etiqueta}
-              <span className="mt-0.5 block break-all text-base font-semibold text-texto">
+              <span className="mt-0.5 block break-words text-base font-semibold text-texto">
                 {aEscribir.texto}
               </span>
             </label>
@@ -233,6 +278,10 @@ function Dialogo({
             />
           </div>
         )}
+
+        {/* Sin campo, anclado abajo: el error va arriba de los botones y el
+            diálogo crece hacia arriba (ver la prop `error`). */}
+        {!aEscribir && error ? <ErrorDelDialogo>{error}</ErrorDelDialogo> : null}
 
         {/* En el celular van apilados y Confirmar queda arriba, Cancelar abajo
             al alcance del pulgar. Desde sm, en fila con Confirmar a la derecha,
@@ -263,8 +312,20 @@ function Dialogo({
             {textoConfirmar}
           </Boton>
         </div>
+
+        {/* Con campo, anclado arriba: el error va debajo de los botones, que
+            así no se mueven (ver la prop `error`). */}
+        {aEscribir && error ? <ErrorDelDialogo>{error}</ErrorDelDialogo> : null}
       </div>
     </div>,
     document.body,
+  );
+}
+
+function ErrorDelDialogo({ children }: { children: ReactNode }) {
+  return (
+    <p role="alert" className="mt-4 text-base leading-snug text-rojo-tinta">
+      {children}
+    </p>
   );
 }

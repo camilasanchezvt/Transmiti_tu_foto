@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowDownTrayIcon as DescargarReposo,
   ArrowPathIcon as ReabrirReposo,
@@ -40,6 +40,7 @@ import { DIAS_DE_AVISO, diasParaElBorrado, urlDescargaVideo } from "../lib/desca
 import { fechaLarga } from "../lib/fecha";
 import LayoutAdmin from "./LayoutAdmin";
 import { esDelHistorial, rutaACompartir, useVolverALista } from "./navegacion";
+import { DialogoBorrarEvento, type LlegadaTrasBorrar } from "./PaginaHistorial";
 import { ajustes as t } from "./textos/ajustes";
 import { comun } from "./textos/comun";
 import { useAlPerderSesion, useSesion } from "./useSesion";
@@ -49,6 +50,11 @@ import { useAlPerderSesion, useSesion } from "./useSesion";
 // fotos), después (video, descargas) y, al final y aparte, el estado (Terminar,
 // o Reabrir si ya terminó). Quien la abre busca UNA cosa y tiene que
 // encontrarla sin leer el resto.
+//
+// Para un admin, en un evento del Historial, después del estado va Borrar el
+// evento: lo borra para siempre con sus fotos y su video, con el mismo diálogo
+// del Historial (se confirma escribiendo el nombre). Si sale, se vuelve al
+// Historial con el aviso "Evento borrado."
 //
 // A los 30 días de la fecha del evento se borran de Cloudinary las fotos y los
 // videos (los números quedan). Una semana antes aparece arriba de todo el aviso
@@ -110,6 +116,7 @@ export default function PaginaAjustes() {
   const idEvento = Number(id);
   const { esAdmin } = useSesion();
   const alPerderSesion = useAlPerderSesion();
+  const navegar = useNavigate();
 
   const [evento, setEvento] = useState<EventoAdmin | null>(null);
   const [noExiste, setNoExiste] = useState(false);
@@ -119,6 +126,8 @@ export default function PaginaAjustes() {
   const [cambiando, setCambiando] = useState<EstadoEvento | null>(null);
   const [errorEstado, setErrorEstado] = useState<unknown>(null);
   const [confirmando, setConfirmando] = useState(false);
+  /** El diálogo de Borrar el evento, abierto. */
+  const [preguntandoBorrar, setPreguntandoBorrar] = useState(false);
 
   // No hay un GET de un evento solo: se pide la lista (sin alcance, así vienen
   // todos) y se busca por id. Si no está, no existe o no es de esta cuenta: el
@@ -215,6 +224,21 @@ export default function PaginaAjustes() {
   // su filtro) o, si no, a la lista donde vive el evento (misma regla que el
   // backend para el historial).
   const lista = useVolverALista(evento);
+
+  // Borrado: al Historial (con su filtro, si se venía de uno filtrado), que
+  // muestra el aviso. Con replace, "Atrás" no vuelve a los Ajustes de un
+  // evento que ya no existe.
+  function alBorrar() {
+    const destino = lista.a.startsWith("/admin/historial") ? lista.a : "/admin/historial";
+    navegar(destino, { replace: true, state: { eventoBorrado: true } satisfies LlegadaTrasBorrar });
+  }
+
+  function alCerrarBorrar(yaNoEsta: boolean) {
+    setPreguntandoBorrar(false);
+    // El backend dijo que no existe (lo borró otra persona): se vuelve a
+    // pedir, y la página pasa a decir "No encontramos este evento".
+    if (yaNoEsta) recargar();
+  }
 
   if (!evento) {
     return (
@@ -405,7 +429,30 @@ export default function PaginaAjustes() {
             </div>
           </Seccion>
         )}
+
+        {/* ── Borrar: lo último de todo, sólo para un admin y sólo en un
+            evento del Historial (el backend no borra uno abierto). Separado
+            del estado por el espacio entre secciones, y se confirma
+            escribiendo el nombre: no se toca de pasada. ───────────────── */}
+        {esAdmin && esDelHistorial(evento) && (
+          <Seccion titulo={t.borrarTitulo}>
+            <div className={TARJETA}>
+              <p className="text-sm text-tenue">{t.borrarDetalle}</p>
+              <Boton
+                variante="peligro"
+                className={`mt-4 ${ANCHO_BOTON}`}
+                icono={BorradoIcono}
+                disabled={ocupado}
+                onClick={() => setPreguntandoBorrar(true)}
+              >
+                {t.borrarAccion}
+              </Boton>
+            </div>
+          </Seccion>
+        )}
       </div>
+
+      {preguntandoBorrar && <DialogoBorrarEvento evento={evento} onBorrado={alBorrar} onCerrar={alCerrarBorrar} />}
 
       <Confirmar
         abierto={confirmando}

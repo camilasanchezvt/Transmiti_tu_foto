@@ -1,6 +1,7 @@
 // Textos de la página Historial: los eventos terminados y los que pasaron su
 // fecha sin publicarse. Lo que comparte con el resto del panel (la barra, los estados, los
-// verbos "Ajustes", "Revisar fotos" y "Descargar video", "Organiza …") vive en comun.ts.
+// verbos "Ajustes", "Revisar fotos", "Descargar video" y "Borrar evento", "Organiza …")
+// vive en comun.ts.
 //
 // Se exporta como `historial` y no como `comun` para poder importar los dos en
 // la misma página sin renombrar.
@@ -56,6 +57,32 @@ export const historial = {
   ajustesDe: (nombre: string) => `Ajustes de ${nombre}`,
   revisarDe: (nombre: string) => `Revisar fotos de ${nombre}`,
   descargarVideoDe: (nombre: string) => `${comun.verbos.descargarVideo} de ${nombre}`,
+
+  /**
+   * Borrar un evento para siempre: la segunda excepción a "nada se borra" (la
+   * otra es eliminar una cuenta). Sólo admins y superadmins, y sólo eventos de
+   * esta lista. Se confirma escribiendo el nombre del evento. Ajustes muestra
+   * el mismo diálogo con estos mismos textos.
+   */
+  borrar: {
+    accion: comun.verbos.borrarEvento,
+    /** Para lectores de pantalla: "Borrar evento" repetido no dice cuál. */
+    accionDe: (nombre: string) => `Borrar el evento ${nombre}`,
+    titulo: (nombre: string) => `¿Borrar “${nombre}” para siempre?`,
+    noSeDeshace: "No se puede deshacer.",
+    /** n = las fotos que tiene; conVideo, si tiene un video listo. */
+    seBorran: (n: number, conVideo: boolean) => {
+      if (n === 0) return conVideo ? "Se borran el evento y el video." : "Se borra el evento. No tiene fotos.";
+      const fotos = n === 1 ? "su foto" : `sus ${n} fotos`;
+      return conVideo ? `Se borran el evento, ${fotos} y el video.` : `Se borran el evento y ${fotos}.`;
+    },
+    /** Si ya pasaron los 30 días: las fotos y el video no están desde antes. */
+    yaBorradas: "Las fotos ya se habían borrado. Se borran el evento y sus datos.",
+    etiqueta: "Para confirmar, escribí el nombre del evento:",
+    confirmar: comun.verbos.borrarEvento,
+    /** El aviso de abajo, en el Historial (también si se borró desde Ajustes). */
+    hecho: "Evento borrado.",
+  },
 
   vacio: {
     /** Un admin mirando todas las cuentas. */

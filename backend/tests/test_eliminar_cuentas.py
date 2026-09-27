@@ -1,7 +1,8 @@
 """Eliminar una cuenta para siempre: DELETE /api/admin/cuentas/{id}.
 
-Es la única excepción a la regla 7 ("nada se borra"), decidida por la usuaria
-el 26-sep-2026, y es sólo para superadmins. La matriz, con actor = quien pide
+Es una de las dos excepciones a la regla 7 ("nada se borra"; la otra es borrar
+un evento del Historial), decidida por la usuaria el 26-sep-2026, y es sólo
+para superadmins. La matriz, con actor = quien pide
 y objetivo = la cuenta (sección 5 de CONSTRUIR-APP.md):
 
 | objetivo                                  | organizador | admin | superadmin |

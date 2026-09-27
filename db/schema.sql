@@ -42,6 +42,10 @@ CREATE TABLE usuarios (
   pred_pantalla_qr         boolean NOT NULL DEFAULT true
 );
 
+-- Un evento tampoco se borra, salvo uno del Historial (terminado, o sin
+-- publicar de fecha pasada) que borra un admin o un superadmin: se va con sus
+-- fotos, de la base y de Cloudinary (DELETE /api/admin/eventos/{id}).
+-- fotos.evento_id es la única clave foránea que apunta acá.
 CREATE TABLE eventos (
   id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   usuario_id     bigint NOT NULL REFERENCES usuarios(id),

@@ -8,6 +8,10 @@ equivocado con dos pestañas abiertas, y eso lo resuelve el panel.
 
 Las cuentas (listar, habilitar, dar de baja) están en routers/cuentas.py.
 
+Borrar un evento del Historial (`borrar_evento`, sólo admin y superadmin) es la
+segunda excepción a "nada se borra", junto con eliminar una cuenta: se va el
+evento con sus fotos, de la base y de Cloudinary.
+
 Mi cuenta (`/yo`) también vive acá: cada cuenta cambia su nombre, su tema, sus
 predeterminados, su contraseña y su avatar. Nunca su email, su rol ni su
 estado. "Olvidé mi contraseña", que es sin sesión, está en routers/cuentas.py.
@@ -16,20 +20,24 @@ estado. "Olvidé mi contraseña", que es sin sesión, está en routers/cuentas.p
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+import unicodedata
+from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import ColumnElement, and_, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm.exc import StaleDataError
 
 from .. import vinculacion
 from ..cloudinary_service import (
+    ErrorBorrado,
     ErrorVideo,
     armar_zip,
+    borrar_archivos_del_evento,
     borrar_avatar_anterior,
     carpeta_de_avatares,
     consultar_video,
@@ -41,7 +49,7 @@ from ..cloudinary_service import (
     verificar_url,
 )
 from ..database import get_db
-from ..deps import es_admin, evento_del_usuario, usuario_actual
+from ..deps import es_admin, evento_del_usuario, solo_admin, usuario_actual
 from ..errores import Codigo, ErrorApp
 from ..fechas import hoy_en_argentina
 from ..limpieza import archivos_vencidos, fecha_vencida, fotos_se_borran_el
@@ -55,12 +63,14 @@ from ..schemas import (
     CodigoVinculacion,
     EstiloPantalla,
     EventoAdmin,
+    EventoBorrado,
     EventoNuevo,
     Firma,
     FotoAdmin,
     FotoModerada,
     ListaFotosAdmin,
     LoteModeracion,
+    PedidoBorrarEvento,
     PedidoCambioContrasena,
     PedidoLogin,
     Predeterminados,
@@ -100,6 +110,11 @@ _SIN_PERMISO = "No tenés permiso para esto"
 _PLURAL = {"pendiente": "pendientes", "aprobada": "aprobadas", "rechazada": "rechazadas"}
 
 log = logging.getLogger(__name__)
+
+# Hijo del de uvicorn, que en Render sale en el log a nivel INFO (el de
+# `app.*` sólo mostraría los errores). Los mensajes empiezan con "eventos:"
+# porque el log de uvicorn no muestra el nombre del logger.
+log_eventos = logging.getLogger("uvicorn.error").getChild("eventos")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -518,6 +533,24 @@ def _exigir_archivos(evento: Evento) -> None:
         raise ErrorApp(Codigo.DATOS_INVALIDOS, _SE_ESTAN_BORRANDO, http=410)
 
 
+def del_vigente(hoy: date) -> ColumnElement[bool]:
+    """`alcance=vigentes`: abiertos de cualquier fecha y sin publicar de hoy en adelante."""
+    return or_(
+        Evento.estado == "activo",
+        and_(Evento.estado == "borrador", Evento.fecha_evento >= hoy),
+    )
+
+
+def del_historial(hoy: date) -> ColumnElement[bool]:
+    """`alcance=historial`: terminados de cualquier fecha y sin publicar de fecha
+    pasada. Es EL criterio del Historial: lo usan el listado y `borrar_evento`,
+    que sólo borra lo que el listado muestra ahí."""
+    return or_(
+        Evento.estado == "cerrado",
+        and_(Evento.estado == "borrador", Evento.fecha_evento < hoy),
+    )
+
+
 @protegido.get("/eventos", response_model=list[EventoAdmin], summary="Listar eventos")
 def listar_eventos(
     alcance: Literal["vigentes", "historial"] | None = Query(
@@ -554,18 +587,10 @@ def listar_eventos(
         consulta = consulta.where(Evento.usuario_id == organizador)
 
     hoy = hoy_en_argentina()
-    vigente = or_(
-        Evento.estado == "activo",
-        and_(Evento.estado == "borrador", Evento.fecha_evento >= hoy),
-    )
-    del_historial = or_(
-        Evento.estado == "cerrado",
-        and_(Evento.estado == "borrador", Evento.fecha_evento < hoy),
-    )
     if alcance == "vigentes":
-        consulta = consulta.where(vigente).order_by(Evento.fecha_evento, Evento.id)
+        consulta = consulta.where(del_vigente(hoy)).order_by(Evento.fecha_evento, Evento.id)
     elif alcance == "historial":
-        consulta = consulta.where(del_historial).order_by(
+        consulta = consulta.where(del_historial(hoy)).order_by(
             Evento.fecha_evento.desc(), Evento.id.desc()
         )
     else:
@@ -634,7 +659,7 @@ def crear_evento(
     for _ in range(5):
         evento = Evento(
             usuario_id=dueno.id,
-            nombre=nuevo.nombre.strip(),
+            nombre=nuevo.nombre,  # ya viene recortado (NombreEvento)
             fecha_evento=nuevo.fecha_evento,
             codigo_publico=generar_codigo_publico(),
             token_pantalla=generar_token_pantalla(),
@@ -896,6 +921,41 @@ def moderar_lote(
 _PLAZO_VIDEO = timedelta(minutes=30)
 
 
+def _video_en_curso(evento: Evento) -> bool:
+    """Cloudinary lo está armando: se pidió hace menos de `_PLAZO_VIDEO` y nadie
+    vio todavía que esté listo. Lo usan armar_video (no pedir otro) y
+    borrar_evento (no borrar la carpeta con un video por aparecer)."""
+    return (
+        evento.video_estado == "procesando"
+        and evento.video_pedido_en is not None
+        and datetime.now(timezone.utc) - evento.video_pedido_en <= _PLAZO_VIDEO
+    )
+
+
+def _tomar_evento_del_usuario(id_evento: int, db: Session, usuario: Usuario) -> Evento:
+    """Como `evento_del_usuario` (mismo 404 para uno ajeno o inexistente), pero
+    con la fila tomada con FOR NO KEY UPDATE hasta el commit.
+
+    Choca con el FOR UPDATE de borrar_evento y con otro pedido igual, y no con
+    el alta de una foto (FOR KEY SHARE, por la clave foránea): los invitados
+    siguen subiendo mientras tanto."""
+    evento = db.get(Evento, id_evento, with_for_update={"key_share": True})
+    if evento is None or not (es_admin(usuario) or evento.usuario_id == usuario.id):
+        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
+    return evento
+
+
+def _guardar_o_404(db: Session) -> None:
+    """Commit de un cambio sobre la fila del evento leída sin lock. Si en el
+    medio se borró el evento (DELETE del Historial), el UPDATE no encuentra la
+    fila: 404, como cualquier evento que no existe, y no un 500."""
+    try:
+        db.commit()
+    except StaleDataError:
+        db.rollback()
+        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO) from None
+
+
 def _como_video(evento: Evento) -> VideoEvento:
     return VideoEvento(
         estado=evento.video_estado or "ninguno",
@@ -928,11 +988,11 @@ def ver_video(
         if url:
             evento.video_estado = "listo"
             evento.video_url = url
-            db.commit()
+            _guardar_o_404(db)
         elif evento.video_pedido_en and datetime.now(timezone.utc) - evento.video_pedido_en > _PLAZO_VIDEO:
             log.warning("video %s: Cloudinary no lo terminó en %s", evento.video_public_id, _PLAZO_VIDEO)
             evento.video_estado = "fallo"
-            db.commit()
+            _guardar_o_404(db)
 
     return _como_video(evento)
 
@@ -960,16 +1020,20 @@ def armar_video(
 
     Con los archivos ya borrados, o desde el día del borrado, 410: no quedan
     fotos con qué armarlo.
+
+    La fila del evento se toma ANTES de pedirle nada a Cloudinary y hasta el
+    commit (`_tomar_evento_del_usuario`), porque el video aparece en la carpeta
+    del evento minutos después del pedido:
+    - si borrar_evento lo tiene tomado, esto espera y da 404 sin pedir nada: un
+      video pedido para un evento ya borrado quedaría en Cloudinary para siempre;
+    - si esto lo tiene, el borrado espera, ve `procesando` y responde 422;
+    - dos pedidos a la vez (doble clic): el segundo espera y devuelve el que
+      está en curso, sin gastar créditos dos veces.
     """
-    evento = evento_del_usuario(id_evento, db, usuario)
+    evento = _tomar_evento_del_usuario(id_evento, db, usuario)
     _exigir_archivos(evento)
 
-    en_curso = (
-        evento.video_estado == "procesando"
-        and evento.video_pedido_en is not None
-        and datetime.now(timezone.utc) - evento.video_pedido_en <= _PLAZO_VIDEO
-    )
-    if en_curso:
+    if _video_en_curso(evento):
         return _como_video(evento)
 
     aprobadas = list(
@@ -1054,3 +1118,161 @@ def _disposicion(nombre: str) -> str:
     from urllib.parse import quote
 
     return "attachment; filename*=UTF-8''" + quote(nombre)
+
+
+# ─────────────────────────────────────────────────────────────
+# Borrar un evento del Historial — sólo admins y superadmins
+# ─────────────────────────────────────────────────────────────
+
+_SOLO_DEL_HISTORIAL = (
+    "Sólo se pueden borrar eventos del Historial. Si sigue abierto, terminalo primero."
+)
+_NOMBRE_NO_COINCIDE = "El nombre no coincide con el del evento"
+_NO_SE_BORRARON_LAS_FOTOS = "No pudimos borrar las fotos. Probá de nuevo en un rato."
+_VIDEO_EN_CURSO = "Se está armando el video de este evento. Probá de nuevo en unos minutos."
+
+
+def _nombre_comparable(nombre: str) -> str:
+    """El nombre como se ve en pantalla, sin mayúsculas: tildes en una sola
+    forma (NFC: una "é" pegada desde macOS viene en dos caracteres), sin
+    espacios alrededor y con los de adentro juntados en uno. El navegador junta
+    los espacios al mostrar el nombre, así que un espacio doble no se ve ni se
+    puede copiar, y en el celular dos espacios seguidos escriben ". ".
+
+    Es exactamente lo que hace el diálogo del panel (`normalizar` de
+    comp/Confirmar.tsx: NFC, trim, cada tramo de espacios a uno, toLowerCase).
+    `lower` y no `casefold`, para no aceptar acá algo que el panel no habilita."""
+    return " ".join(unicodedata.normalize("NFC", nombre).split()).lower()
+
+
+@protegido.delete(
+    "/eventos/{id_evento}",
+    response_model=EventoBorrado,
+    responses={
+        **_ERROR_403,
+        **_ERROR_404_EVENTO,
+        422: {"model": RespuestaError,
+              "description": "DATOS_INVALIDOS: el evento no es del Historial, el nombre no "
+                             "coincide, se está armando su video o el cuerpo está mal "
+                             "formado"},
+        503: {"model": RespuestaError,
+              "description": "DATOS_INVALIDOS: Cloudinary no pudo borrar las fotos; "
+                             "no se borró nada"},
+    },
+    summary="Borrar un evento del Historial para siempre (admin o superadmin)",
+)
+def borrar_evento(
+    id_evento: int,
+    pedido: PedidoBorrarEvento,
+    db: Session = Depends(get_db),
+    actor: Usuario = Depends(solo_admin),
+) -> EventoBorrado:
+    """La segunda excepción a "nada se borra" (regla 7), junto con eliminar una
+    cuenta. Sólo admins y superadmins, sobre eventos de cualquier cuenta; un
+    organizador recibe 403 aunque el evento sea suyo y aunque falte el cuerpo.
+
+    Sólo eventos del Historial, con el mismo criterio que el listado
+    (`del_historial`): terminados, o sin publicar de fecha pasada. Uno abierto,
+    de cualquier fecha, o uno sin publicar de hoy en adelante → 422. Además
+    `confirmar_nombre` tiene que ser el nombre del evento, comparado como se ve
+    (`_nombre_comparable`), y no vacío, o 422. Y si Cloudinary está armando su
+    video, 422: ver abajo. En cada rechazo no se toca nada.
+
+    Un video en curso (`procesando`, pedido hace menos de `_PLAZO_VIDEO`)
+    aparece en la carpeta del evento minutos DESPUÉS del pedido. Si el borrado
+    por prefijo pasara antes, el MP4, armado con fotos de invitados, quedaría
+    publicado en Cloudinary sin ninguna fila que lo recuerde: ninguna pasada de
+    limpieza vuelve a mirar la carpeta de un evento que ya no existe. Por eso se
+    le pregunta a Cloudinary: si ya está (nadie lo consultó todavía), se sigue y
+    el borrado por prefijo lo alcanza, aunque las fotos ya se hubieran borrado a
+    los 30 días; si no, 422 y se prueba en unos minutos.
+
+    Qué se borra: el evento y TODO lo suyo. Si sus archivos todavía no se
+    borraron (`fotos_borradas_en` en NULL), primero se borran de Cloudinary
+    todas sus imágenes y todos sus videos, con el mismo borrado por prefijo
+    exacto de la limpieza a los 30 días (`eventos/{codigo_publico}/`, con la
+    barra final). Si Cloudinary falla, no se borra nada de la base y responde
+    503: se puede volver a intentar, porque borrar lo que ya no está no es
+    error. Después, en una transacción, se borran las filas de sus fotos y la
+    del evento (`fotos.evento_id` es la única clave foránea hacia `eventos`), y
+    los códigos cortos de vinculación que tuviera vivos (viven en memoria).
+
+    La fila del evento se toma con FOR UPDATE antes de mirar nada, y el lock
+    dura hasta el final, Cloudinary incluido:
+    - la pasada de limpieza toma los eventos con SKIP LOCKED, así que mientras
+      tanto lo saltea; y si la pasada lo tenía tomado primero, esto espera a
+      que termine y ve su `fotos_borradas_en`: nunca se pide dos veces el
+      borrado ni se marca un evento que ya no existe;
+    - dos borrados a la vez del mismo evento: el segundo espera y responde 404;
+    - el alta de una foto (FOR KEY SHARE, por la clave foránea) espera y
+      después falla: no queda ninguna fila colgada de un evento borrado;
+    - armar_video toma la fila antes de pedir el video: si lo tiene él, esto
+      espera y ve `procesando`; si lo tiene esto, armar_video espera y da 404
+      sin pedirle nada a Cloudinary.
+
+    Después, el código público y el token de pantalla responden 404: el evento
+    ya no existe. El log lleva ids, nunca el nombre del evento ni emails.
+    """
+    fila = db.execute(
+        select(Evento, del_historial(hoy_en_argentina()).label("del_historial"))
+        .where(Evento.id == id_evento)
+        .with_for_update()
+    ).first()
+    if fila is None:
+        raise ErrorApp(Codigo.EVENTO_NO_ENCONTRADO)
+    evento, es_del_historial = fila
+    if not es_del_historial:
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _SOLO_DEL_HISTORIAL)
+    escrito = _nombre_comparable(pedido.confirmar_nombre)
+    # Vacío nunca coincide: un evento de nombre en blanco (de antes de
+    # NombreEvento) no se borra con un campo vacío, sin escribir nada.
+    if not escrito or escrito != _nombre_comparable(evento.nombre):
+        raise ErrorApp(Codigo.DATOS_INVALIDOS, _NOMBRE_NO_COINCIDE)
+
+    llamar_a_cloudinary = evento.fotos_borradas_en is None
+    if _video_en_curso(evento):
+        if not evento.video_public_id or consultar_video(evento.video_public_id) is None:
+            raise ErrorApp(Codigo.DATOS_INVALIDOS, _VIDEO_EN_CURSO)
+        # Ya está en la carpeta: el borrado por prefijo lo alcanza. También si
+        # las fotos ya se habían borrado (el video terminó después de la pasada).
+        llamar_a_cloudinary = True
+
+    id_actor = actor.id
+    archivos: int | None = None  # None: no hizo falta llamar a Cloudinary
+    if llamar_a_cloudinary:
+        try:
+            archivos = borrar_archivos_del_evento(evento.codigo_publico)
+        except ErrorBorrado as e:
+            # Suelta el lock enseguida; el mensaje de ErrorBorrado nunca lleva el
+            # secreto, sólo el código HTTP y el principio de la respuesta.
+            db.rollback()
+            log_eventos.error(
+                "eventos: la cuenta %s no pudo borrar el evento %s: Cloudinary falló (%s); "
+                "no se borró nada de la base",
+                id_actor, id_evento, e,
+            )
+            raise ErrorApp(Codigo.DATOS_INVALIDOS, _NO_SE_BORRARON_LAS_FOTOS, http=503) from e
+
+    # Con el evento tomado no puede entrar ninguna foto nueva: lo que se borra
+    # acá es exactamente lo que tenía. Las fotos van antes a propósito, aunque
+    # la clave foránea tenga ON DELETE CASCADE: así el número sale del DELETE.
+    fotos = db.execute(
+        delete(Foto).where(Foto.evento_id == id_evento).execution_options(
+            synchronize_session=False
+        )
+    ).rowcount
+    db.execute(
+        delete(Evento).where(Evento.id == id_evento).execution_options(
+            synchronize_session=False
+        )
+    )
+    db.commit()
+    vinculacion.anular_del_evento(id_evento)
+
+    log_eventos.info(
+        "eventos: la cuenta %s borró el evento %s con %s fotos; %s",
+        id_actor, id_evento, fotos,
+        "ya no tenía archivos en Cloudinary" if archivos is None
+        else f"{archivos} archivos borrados de Cloudinary",
+    )
+    return EventoBorrado(eliminado=True, fotos=fotos)
