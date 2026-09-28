@@ -137,10 +137,15 @@ export function actualizarUsuarioEnSesion(usuario: UsuarioYo): void {
 }
 
 /** Para "Salir": olvida quién era y borra el token de esta pestaña (la copia
- *  guardada, sólo si otra pestaña no la renovó). Después, navegá al login. */
+ *  guardada, sólo si otra pestaña no la renovó). Después, navegá al login.
+ *
+ *  El tema vuelve a Automático: el elegido es de la cuenta, no del aparato.
+ *  Sin esto, la pantalla de Entrar y la próxima persona que use ese celular
+ *  heredaban el tema de quien salió. Al entrar, /yo trae el de la cuenta nueva. */
 export function olvidarSesion(): void {
   enMemoria = null;
   admin.salir();
+  aplicarTema("automatico");
 }
 
 /**
